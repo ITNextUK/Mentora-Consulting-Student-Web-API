@@ -1,0 +1,313 @@
+const fs = require('fs');
+const path = require('path');
+const pdfParse = require('pdf-parse');
+const mammoth = require('mammoth');
+const logger = require('../utils/logger');
+
+class CVExtractionService {
+  /**
+   * Extract text from PDF file
+   */
+  static async extractFromPDF(filePath) {
+    try {
+      const dataBuffer = fs.readFileSync(filePath);
+      const data = await pdfParse(dataBuffer);
+      return data.text;
+    } catch (error) {
+      logger.error('PDF extraction error:', error);
+      throw new Error('Failed to extract text from PDF');
+    }
+  }
+
+  /**
+   * Extract text from DOC/DOCX file
+   */
+  static async extractFromWord(filePath) {
+    try {
+      const result = await mammoth.extractRawText({ path: filePath });
+      return result.value;
+    } catch (error) {
+      logger.error('Word extraction error:', error);
+      throw new Error('Failed to extract text from Word document');
+    }
+  }
+
+  /**
+   * Extract text from CV file based on type
+   */
+  static async extractText(filePath) {
+    const ext = path.extname(filePath).toLowerCase();
+    
+    if (ext === '.pdf') {
+      return await this.extractFromPDF(filePath);
+    } else if (ext === '.doc' || ext === '.docx') {
+      return await this.extractFromWord(filePath);
+    } else {
+      throw new Error('Unsupported file format');
+    }
+  }
+
+  /**
+   * Parse extracted text and structure data
+   */
+  static async parseCV(text) {
+    // Enhanced parsing logic with regex patterns
+    const data = {
+      personalInfo: {},
+      education: [],
+      workExperience: [],
+      skills: [],
+      references: {}
+    };
+
+    // Normalize text - remove extra whitespace
+    const normalizedText = text.replace(/\s+/g, ' ').trim();
+    const lines = text.split('\n').map(line => line.trim()).filter(line => line.length > 0);
+
+    // Extract name (usually first line or before email)
+    if (lines.length > 0) {
+      // Look for a name pattern (2-3 words with capital letters)
+      const nameRegex = /^([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})$/;
+      for (let i = 0; i < Math.min(5, lines.length); i++) {
+        const match = lines[i].match(nameRegex);
+        if (match) {
+          const nameParts = match[1].split(' ');
+          if (nameParts.length >= 2) {
+            data.personalInfo.firstName = nameParts[0];
+            data.personalInfo.lastName = nameParts.slice(1).join(' ');
+            break;
+          }
+        }
+      }
+    }
+
+    // Extract email
+    const emailRegex = /[\w\.-]+@[\w\.-]+\.\w+/gi;
+    const emails = normalizedText.match(emailRegex);
+    if (emails && emails.length > 0) {
+      data.personalInfo.email = emails[0].toLowerCase();
+    }
+
+    // Extract phone - improved pattern
+    const phoneRegex = /(?:\+?\d{1,3}[-.\s]?)?(?:\(?\d{2,4}\)?[-.\s]?)?\d{3,4}[-.\s]?\d{3,4}/g;
+    const phones = normalizedText.match(phoneRegex);
+    if (phones && phones.length > 0) {
+      // Find the most likely phone number (longest one)
+      const validPhone = phones.sort((a, b) => b.length - a.length)[0];
+      data.personalInfo.phone = validPhone.replace(/\s+/g, ' ').trim();
+    }
+
+    // Extract GitHub
+    const githubRegex = /(?:github\.com\/|@)([\w-]+)/gi;
+    const github = normalizedText.match(githubRegex);
+    if (github && github.length > 0) {
+      const username = github[0].replace(/github\.com\/|@/gi, '');
+      data.references.github = `https://github.com/${username}`;
+    }
+
+    // Extract LinkedIn
+    const linkedinRegex = /(?:linkedin\.com\/in\/)([\w-]+)/gi;
+    const linkedin = normalizedText.match(linkedinRegex);
+    if (linkedin && linkedin.length > 0) {
+      data.references.linkedin = `https://${linkedin[0]}`;
+    }
+
+    // Extract skills (common programming and soft skills)
+    const skillsKeywords = [
+      'JavaScript', 'TypeScript', 'Python', 'Java', 'C\\+\\+', 'C#', 'Ruby', 'PHP', 'Go', 'Rust', 'Swift', 'Kotlin',
+      'React', 'React.js', 'Node\\.js', 'Angular', 'Vue', 'Vue.js', 'Express', 'Django', 'Flask', 'Spring', 'Laravel',
+      'SQL', 'MongoDB', 'PostgreSQL', 'MySQL', 'Redis', 'Cassandra', 'DynamoDB',
+      'Git', 'Docker', 'Kubernetes', 'Jenkins', 'CI/CD', 'DevOps',
+      'AWS', 'Azure', 'GCP', 'Google Cloud', 'Heroku', 'Firebase',
+      'HTML', 'CSS', 'SASS', 'SCSS', 'Tailwind', 'Bootstrap',
+      'REST', 'GraphQL', 'API', 'Microservices', 'WebSockets',
+      'Machine Learning', 'AI', 'Data Science', 'TensorFlow', 'PyTorch',
+      'Agile', 'Scrum', 'Leadership', 'Communication', 'Teamwork', 'Problem Solving'
+    ];
+
+    skillsKeywords.forEach(skill => {
+      const regex = new RegExp(`\\b${skill}\\b`, 'gi');
+      if (regex.test(normalizedText)) {
+        const normalizedSkill = skill.replace(/\\/g, '');
+        if (!data.skills.includes(normalizedSkill)) {
+          data.skills.push(normalizedSkill);
+        }
+      }
+    });
+
+    // Extract education - improved parsing
+    const educationSection = this.extractSection(lines, ['education', 'academic', 'qualification']);
+    if (educationSection.length > 0) {
+      let currentEducation = null;
+      
+      educationSection.forEach((line, index) => {
+        // Look for degree patterns
+        const degreeRegex = /(Bachelor|Master|PhD|Doctorate|BSc|MSc|BA|MA|B\.?Tech|M\.?Tech|Diploma|Certificate|Associate|Hons?|Honours?)[\s\w.,()]+/gi;
+        const degreeMatch = line.match(degreeRegex);
+        
+        if (degreeMatch) {
+          if (currentEducation) {
+            data.education.push(currentEducation);
+          }
+          
+          currentEducation = {
+            degree: degreeMatch[0].trim(),
+            institution: '',
+            graduationYear: '',
+            gpa: ''
+          };
+          
+          // Look for year in current or next lines
+          const yearRegex = /\b(19|20)\d{2}\b/g;
+          const contextLines = educationSection.slice(index, Math.min(index + 3, educationSection.length)).join(' ');
+          const years = contextLines.match(yearRegex);
+          if (years) {
+            currentEducation.graduationYear = years[years.length - 1];
+          }
+          
+          // Look for GPA
+          const gpaRegex = /(?:GPA|Grade)[:\s]*([\d.]+)/gi;
+          const gpaMatch = contextLines.match(gpaRegex);
+          if (gpaMatch) {
+            const gpaValue = gpaMatch[0].match(/([\d.]+)/);
+            if (gpaValue) {
+              currentEducation.gpa = gpaValue[0];
+            }
+          }
+        } else if (currentEducation && !currentEducation.institution && line.length > 5) {
+          // Likely the institution name
+          currentEducation.institution = line;
+        }
+      });
+      
+      if (currentEducation) {
+        data.education.push(currentEducation);
+      }
+    }
+
+    // Extract work experience - improved parsing
+    const workSection = this.extractSection(lines, ['experience', 'employment', 'work history', 'professional']);
+    if (workSection.length > 0) {
+      let currentWork = null;
+      
+      workSection.forEach((line, index) => {
+        // Look for dates (indicating start of a new position)
+        const dateRegex = /\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|January|February|March|April|May|June|July|August|September|October|November|December|\d{1,2}\/\d{4}|\d{4})\b.*?(?:to|-).*?\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|January|February|March|April|May|June|July|August|September|October|November|December|Present|Current|\d{1,2}\/\d{4}|\d{4})\b/gi;
+        const dateMatch = line.match(dateRegex);
+        
+        if (dateMatch) {
+          if (currentWork) {
+            data.workExperience.push(currentWork);
+          }
+          
+          // Extract dates
+          const dates = dateMatch[0].split(/to|-/).map(d => d.trim());
+          
+          currentWork = {
+            company: '',
+            position: '',
+            startDate: dates[0] || '',
+            endDate: dates[1] || 'Present',
+            description: ''
+          };
+          
+          // Look for position/company in nearby lines
+          if (index > 0) {
+            currentWork.position = workSection[index - 1];
+          }
+          if (index > 1 && workSection[index - 2].length < workSection[index - 1].length) {
+            currentWork.company = workSection[index - 2];
+            currentWork.position = workSection[index - 1];
+          }
+        } else if (currentWork && line.length > 10 && !currentWork.description) {
+          // Likely a description
+          currentWork.description = line;
+        } else if (!currentWork && line.length > 5) {
+          // Could be position or company
+          if (currentWork) {
+            if (!currentWork.position) {
+              currentWork.position = line;
+            } else if (!currentWork.company) {
+              currentWork.company = line;
+            }
+          }
+        }
+      });
+      
+      if (currentWork) {
+        data.workExperience.push(currentWork);
+      }
+    }
+
+    return data;
+  }
+
+  /**
+   * Extract a specific section from CV
+   */
+  static extractSection(lines, sectionKeywords) {
+    let sectionLines = [];
+    let inSection = false;
+    let sectionStartIndex = -1;
+
+    for (let i = 0; i < lines.length; i++) {
+      const lineLower = lines[i].toLowerCase();
+      
+      // Check if this line is a section header
+      const isHeader = sectionKeywords.some(keyword => 
+        lineLower.includes(keyword) && lines[i].length < 50
+      );
+      
+      if (isHeader) {
+        inSection = true;
+        sectionStartIndex = i;
+        continue;
+      }
+      
+      // Check if we've hit another section (all caps or short line after content)
+      if (inSection && lines[i].match(/^[A-Z\s]{3,30}$/) && i > sectionStartIndex + 2) {
+        break;
+      }
+      
+      if (inSection) {
+        sectionLines.push(lines[i]);
+      }
+    }
+
+    return sectionLines;
+  }
+
+  /**
+   * Main method to extract and parse CV data
+   */
+  static async extractCvData(filePath) {
+    try {
+      logger.info(`Starting CV extraction for: ${filePath}`);
+      
+      // Extract text from file
+      const text = await this.extractText(filePath);
+      
+      if (!text || text.trim().length === 0) {
+        throw new Error('No text content found in CV');
+      }
+
+      // Parse the extracted text
+      const parsedData = await this.parseCV(text);
+      
+      logger.info('CV extraction completed successfully');
+      return {
+        success: true,
+        data: parsedData,
+        rawText: text
+      };
+    } catch (error) {
+      logger.error('CV extraction failed:', error);
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+}
+
+module.exports = CVExtractionService;

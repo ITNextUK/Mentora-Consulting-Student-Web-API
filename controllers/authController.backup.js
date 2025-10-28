@@ -32,7 +32,6 @@ const generateRefreshToken = (studentId) => {
  */
 const register = async (req, res) => {
   try {
-    console.log('Registration request body:', req.body);
     const { firstName, lastName, email, password, phone } = req.body;
 
     // Check if student already exists
@@ -59,7 +58,7 @@ const register = async (req, res) => {
     const refreshToken = generateRefreshToken(student._id);
 
     // Send welcome email (async, don't wait)
-    sendWelcomeEmail(student).catch(err => 
+    sendWelcomeEmail(email, firstName).catch(err => 
       logger.error('Failed to send welcome email:', err)
     );
 
@@ -168,9 +167,9 @@ const refreshToken = async (req, res) => {
     }
 
     // Check if student exists and is active
-    const student = await Student.findById(decoded.studentId);
+    const student = await Student.findByPk(decoded.studentId);
     
-    if (!student || student.status !== 'active') {
+    if (!student || student.status !== 'Active') {
       return res.status(401).json(
         createErrorResponse('Student not found or inactive')
       );
@@ -201,7 +200,7 @@ const forgotPassword = async (req, res) => {
   try {
     const { email } = req.body;
 
-    const student = await Student.findOne({ email: email.toLowerCase() });
+    const student = await Student.findOne({ where: { email } });
     
     if (!student) {
       // Don't reveal if email exists
@@ -212,20 +211,15 @@ const forgotPassword = async (req, res) => {
 
     // Generate reset token (valid for 1 hour)
     const resetToken = jwt.sign(
-      { studentId: student._id, type: 'reset' },
+      { studentId: student.studentId, type: 'reset' },
       process.env.JWT_SECRET,
       { expiresIn: '1h' }
     );
 
-    // Store reset token in database
-    student.resetPasswordToken = resetToken;
-    student.resetPasswordExpires = Date.now() + 3600000; // 1 hour
-    await student.save();
-
     // Send reset email
     await sendPasswordResetEmail(student, resetToken);
 
-    logger.info(`Password reset requested for: ${student._id}`);
+    logger.info(`Password reset requested for: ${student.studentId}`);
 
     res.json(
       createSuccessResponse('If the email exists, a reset link will be sent')
@@ -255,7 +249,7 @@ const resetPassword = async (req, res) => {
     }
 
     // Find student
-    const student = await Student.findById(decoded.studentId);
+    const student = await Student.findByPk(decoded.studentId);
     
     if (!student) {
       return res.status(404).json(
@@ -263,20 +257,55 @@ const resetPassword = async (req, res) => {
       );
     }
 
-    // Check if token is still valid
-    if (student.resetPasswordExpires < Date.now()) {
-      return res.status(401).json(
-        createErrorResponse('Reset token has expired')
-      );
-    }
+    // Hash new password
+    const passwordHash = await bcrypt.hash(password, 10);
 
-    // Update password (will be hashed by pre-save hook)
-    student.password = password;
-    student.resetPasswordToken = undefined;
-    student.resetPasswordExpires = undefined;
-    await student.save();
+    // Update password using stored procedure
+    await Student.sequelize.query(
+      `SELECT mentora_ref.sp_ref_student_modify(
+        :studentId, :firstName, :lastName, :email, :phone,
+        :nic, :dateOfBirth, :gender, :address, :city, :country, :profilePicturePath,
+        :degree, :institution, :graduationYear, :gpa, :ieltsScore, :englishLevel,
+        :workExperience, :skills, :coursesOfInterest, :locationInterests,
+        :github, :linkedin, :portfolio, :cvPath,
+        :passwordHash, :status, :studentId
+      )`,
+      {
+        replacements: {
+          studentId: student.studentId,
+          firstName: student.firstName,
+          lastName: student.lastName,
+          email: student.email,
+          phone: student.phone,
+          nic: student.nic,
+          dateOfBirth: student.dateOfBirth,
+          gender: student.gender,
+          address: student.address,
+          city: student.city,
+          country: student.country,
+          profilePicturePath: student.profilePicturePath,
+          degree: student.degree,
+          institution: student.institution,
+          graduationYear: student.graduationYear,
+          gpa: student.gpa,
+          ieltsScore: student.ieltsScore,
+          englishLevel: student.englishLevel,
+          workExperience: JSON.stringify(student.workExperience || []),
+          skills: JSON.stringify(student.skills || []),
+          coursesOfInterest: JSON.stringify(student.coursesOfInterest || []),
+          locationInterests: JSON.stringify(student.locationInterests || []),
+          github: student.github,
+          linkedin: student.linkedin,
+          portfolio: student.portfolio,
+          cvPath: student.cvPath,
+          passwordHash,
+          status: student.status
+        },
+        type: Student.sequelize.QueryTypes.SELECT
+      }
+    );
 
-    logger.info(`Password reset successful for: ${student._id}`);
+    logger.info(`Password reset successful for: ${student.studentId}`);
 
     res.json(
       createSuccessResponse('Password reset successful')
@@ -302,7 +331,7 @@ const resetPassword = async (req, res) => {
 const getCurrentStudent = async (req, res) => {
   try {
     res.json(
-      createSuccessResponse('Student retrieved successfully', req.student.toPublicJSON())
+      createSuccessResponse('Student retrieved successfully', req.student.toJSON())
     );
   } catch (error) {
     logger.error('Get current student error:', error);

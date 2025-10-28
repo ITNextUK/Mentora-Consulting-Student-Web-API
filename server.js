@@ -1,54 +1,22 @@
 require('dotenv').config();
 const app = require('./app');
-const sequelize = require('./config/database');
+const { connectDB, closeDB } = require('./config/mongodb');
 const logger = require('./utils/logger');
 
-const PORT = process.env.PORT || 5001;
-
-// Database connection with retry logic
-const connectWithRetry = async (retries = 5, delay = 5000) => {
-  for (let i = 0; i < retries; i++) {
-    try {
-      await sequelize.authenticate();
-      logger.info('PostgreSQL database connected successfully');
-      return true;
-    } catch (error) {
-      logger.error(`Database connection attempt ${i + 1} failed:`, error.message);
-      
-      if (i < retries - 1) {
-        logger.info(`Retrying in ${delay / 1000} seconds...`);
-        await new Promise(resolve => setTimeout(resolve, delay));
-      } else {
-        logger.error('Max retries reached. Could not connect to database.');
-        return false;
-      }
-    }
-  }
-};
+const PORT = process.env.PORT || 3001;
 
 // Start server
 const startServer = async () => {
   try {
-    // Connect to database
-    const dbConnected = await connectWithRetry();
-    
-    if (!dbConnected) {
-      logger.error('Failed to connect to database. Exiting...');
-      process.exit(1);
-    }
-
-    // Sync models (optional - be careful in production)
-    if (process.env.NODE_ENV === 'development') {
-      // await sequelize.sync({ alter: true });
-      logger.info('Database models synced');
-    }
+    // Connect to MongoDB
+    await connectDB();
 
     // Start listening
     const server = app.listen(PORT, () => {
       logger.info(`
 ╔═══════════════════════════════════════════════════════════╗
 ║                                                           ║
-║   Mentora Consulting Student Web API                     ║
+║   Mentora Consulting Student Web API (MongoDB)           ║
 ║                                                           ║
 ║   Server running on port: ${PORT}                          ║
 ║   Environment: ${process.env.NODE_ENV || 'development'}                               ║
@@ -69,7 +37,7 @@ const startServer = async () => {
         logger.info('HTTP server closed');
         
         try {
-          await sequelize.close();
+          await closeDB();
           logger.info('Database connection closed');
           process.exit(0);
         } catch (error) {

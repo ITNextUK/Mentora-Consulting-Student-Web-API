@@ -3,18 +3,24 @@ const { createErrorResponse } = require('../utils/responseHelper');
 
 /**
  * Middleware to handle validation errors
+ * Formats and returns validation error messages
  */
 const handleValidationErrors = (req, res, next) => {
   const errors = validationResult(req);
   
   if (!errors.isEmpty()) {
+    const errorDetails = errors.array().map(err => ({
+      field: err.path,
+      message: err.msg,
+      value: err.value
+    }));
+    
+    console.log('Validation errors:', errorDetails);
+    
     return res.status(400).json(
       createErrorResponse(
         'Validation failed',
-        errors.array().map(err => ({
-          field: err.path,
-          message: err.msg
-        }))
+        errorDetails
       )
     );
   }
@@ -45,12 +51,12 @@ const validateStudentRegistration = [
   body('password')
     .notEmpty().withMessage('Password is required')
     .isLength({ min: 8 }).withMessage('Password must be at least 8 characters')
-    .matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]/)
-    .withMessage('Password must contain uppercase, lowercase, number and special character'),
+    .matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/)
+    .withMessage('Password must contain at least one uppercase letter, one lowercase letter, and one number'),
   
   body('phone')
-    .optional()
-    .isMobilePhone().withMessage('Invalid phone number'),
+    .optional({ nullable: true, checkFalsy: true })
+    .isString().withMessage('Phone must be a string'),
   
   handleValidationErrors
 ];
@@ -163,8 +169,8 @@ const validateNewPassword = [
   body('password')
     .notEmpty().withMessage('Password is required')
     .isLength({ min: 8 }).withMessage('Password must be at least 8 characters')
-    .matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]/)
-    .withMessage('Password must contain uppercase, lowercase, number and special character'),
+    .matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/)
+    .withMessage('Password must contain at least one uppercase letter, one lowercase letter, and one number'),
   
   handleValidationErrors
 ];

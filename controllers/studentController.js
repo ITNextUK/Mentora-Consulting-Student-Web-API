@@ -1,9 +1,10 @@
-const { Student } = require('../models');
+const Student = require('../models/StudentMongo');
 const { createSuccessResponse, createErrorResponse } = require('../utils/responseHelper');
 const { deleteFile } = require('../middlewares/fileUpload');
 const CVExtractionService = require('../services/cvExtractionService');
 const logger = require('../utils/logger');
 const path = require('path');
+const fs = require('fs');
 
 /**
  * Get student profile
@@ -13,7 +14,7 @@ const getProfile = async (req, res) => {
     const student = req.student;
 
     res.json(
-      createSuccessResponse('Profile retrieved successfully', student.toJSON())
+      createSuccessResponse('Profile retrieved successfully', student.toPublicJSON())
     );
   } catch (error) {
     logger.error('Get profile error:', error);
@@ -31,8 +32,8 @@ const updateProfile = async (req, res) => {
     const studentId = req.studentId;
     const updateData = req.body;
 
-    // Get current student data
-    const student = await Student.findByPk(studentId);
+    // Find student
+    const student = await Student.findById(studentId);
     
     if (!student) {
       return res.status(404).json(
@@ -40,67 +41,44 @@ const updateProfile = async (req, res) => {
       );
     }
 
-    // Merge update data with existing data
-    const mergedData = {
-      studentId: student.studentId,
-      firstName: updateData.firstName || student.firstName,
-      lastName: updateData.lastName || student.lastName,
-      email: updateData.email || student.email,
-      phone: updateData.phone || student.phone,
-      nic: updateData.nic || student.nic,
-      dateOfBirth: updateData.dateOfBirth || student.dateOfBirth,
-      gender: updateData.gender || student.gender,
-      address: updateData.address || student.address,
-      city: updateData.city || student.city,
-      country: updateData.country || student.country,
-      profilePicturePath: updateData.profilePicturePath || student.profilePicturePath,
-      degree: updateData.degree || student.degree,
-      institution: updateData.institution || student.institution,
-      graduationYear: updateData.graduationYear || student.graduationYear,
-      gpa: updateData.gpa || student.gpa,
-      ieltsScore: updateData.ieltsScore || student.ieltsScore,
-      englishLevel: updateData.englishLevel || student.englishLevel,
-      workExperience: updateData.workExperience || student.workExperience || [],
-      skills: updateData.skills || student.skills || [],
-      coursesOfInterest: updateData.coursesOfInterest || student.coursesOfInterest || [],
-      locationInterests: updateData.locationInterests || student.locationInterests || [],
-      github: updateData.github || student.github,
-      linkedin: updateData.linkedin || student.linkedin,
-      portfolio: updateData.portfolio || student.portfolio,
-      cvPath: updateData.cvPath || student.cvPath,
-      passwordHash: student.passwordHash,
-      status: student.status
-    };
+    // Update fields
+    if (updateData.firstName) student.firstName = updateData.firstName;
+    if (updateData.lastName) student.lastName = updateData.lastName;
+    if (updateData.phone) student.phone = updateData.phone;
+    if (updateData.dateOfBirth) student.dateOfBirth = updateData.dateOfBirth;
+    if (updateData.gender) student.gender = updateData.gender;
+    if (updateData.nationality) student.nationality = updateData.nationality;
+    if (updateData.address) student.address = updateData.address;
+    if (updateData.city) student.city = updateData.city;
+    if (updateData.postalCode) student.postalCode = updateData.postalCode;
+    if (updateData.country) student.country = updateData.country;
+    if (updateData.degree) student.degree = updateData.degree;
+    if (updateData.institution) student.institution = updateData.institution;
+    if (updateData.graduationYear) student.graduationYear = updateData.graduationYear;
+    if (updateData.gpa) student.gpa = updateData.gpa;
+    if (updateData.ieltsScore) student.ieltsScore = updateData.ieltsScore;
+    if (updateData.githubUrl) student.githubUrl = updateData.githubUrl;
+    if (updateData.linkedinUrl) student.linkedinUrl = updateData.linkedinUrl;
+    if (updateData.portfolioUrl) student.portfolioUrl = updateData.portfolioUrl;
+    
+    // Update arrays
+    if (updateData.education) student.education = updateData.education;
+    if (updateData.workExperience) student.workExperience = updateData.workExperience;
+    if (updateData.skills) student.skills = updateData.skills;
+    if (updateData.coursesOfInterest) student.coursesOfInterest = updateData.coursesOfInterest;
+    if (updateData.locationInterests) student.locationInterests = updateData.locationInterests;
+    
+    // Mark profile as completed if enough data is provided
+    if (student.firstName && student.lastName && student.email && student.phone) {
+      student.profileCompleted = true;
+    }
 
-    // Update using stored procedure
-    await Student.sequelize.query(
-      `SELECT mentora_ref.sp_ref_student_modify(
-        :studentId, :firstName, :lastName, :email, :phone,
-        :nic, :dateOfBirth, :gender, :address, :city, :country, :profilePicturePath,
-        :degree, :institution, :graduationYear, :gpa, :ieltsScore, :englishLevel,
-        :workExperience, :skills, :coursesOfInterest, :locationInterests,
-        :github, :linkedin, :portfolio, :cvPath,
-        :passwordHash, :status, :studentId
-      )`,
-      {
-        replacements: {
-          ...mergedData,
-          workExperience: JSON.stringify(mergedData.workExperience),
-          skills: JSON.stringify(mergedData.skills),
-          coursesOfInterest: JSON.stringify(mergedData.coursesOfInterest),
-          locationInterests: JSON.stringify(mergedData.locationInterests)
-        },
-        type: Student.sequelize.QueryTypes.SELECT
-      }
-    );
-
-    // Fetch updated student
-    const updatedStudent = await Student.findByPk(studentId);
+    await student.save();
 
     logger.info(`Profile updated: ${studentId}`);
 
     res.json(
-      createSuccessResponse('Profile updated successfully', updatedStudent.toJSON())
+      createSuccessResponse('Profile updated successfully', student.toPublicJSON())
     );
   } catch (error) {
     logger.error('Update profile error:', error);
@@ -122,62 +100,37 @@ const uploadCV = async (req, res) => {
     }
 
     const studentId = req.studentId;
-    const cvPath = req.file.path;
+    // Store relative path from project root
+    // req.file.path is absolute, we need to make it relative
+    const absolutePath = req.file.path.replace(/\\/g, '/'); // Normalize path separators
+    const projectRoot = path.join(__dirname, '..').replace(/\\/g, '/');
+    const cvPath = absolutePath.replace(projectRoot + '/', ''); // Remove project root to get relative path
+    
+    logger.info(`Uploading CV for student ${studentId}`);
+    logger.info(`  Absolute path: ${absolutePath}`);
+    logger.info(`  Project root: ${projectRoot}`);
+    logger.info(`  Relative path (saving to DB): ${cvPath}`);
 
     // Get current student
-    const student = await Student.findByPk(studentId);
+    const student = await Student.findById(studentId);
+    
+    if (!student) {
+      return res.status(404).json(
+        createErrorResponse('Student not found')
+      );
+    }
     
     // Delete old CV if exists
     if (student.cvPath) {
-      deleteFile(path.join(__dirname, '..', student.cvPath));
+      const oldPath = path.join(__dirname, '..', student.cvPath);
+      deleteFile(oldPath);
     }
 
-    // Update CV path using stored procedure
-    await Student.sequelize.query(
-      `SELECT mentora_ref.sp_ref_student_modify(
-        :studentId, :firstName, :lastName, :email, :phone,
-        :nic, :dateOfBirth, :gender, :address, :city, :country, :profilePicturePath,
-        :degree, :institution, :graduationYear, :gpa, :ieltsScore, :englishLevel,
-        :workExperience, :skills, :coursesOfInterest, :locationInterests,
-        :github, :linkedin, :portfolio, :cvPath,
-        :passwordHash, :status, :studentId
-      )`,
-      {
-        replacements: {
-          studentId: student.studentId,
-          firstName: student.firstName,
-          lastName: student.lastName,
-          email: student.email,
-          phone: student.phone,
-          nic: student.nic,
-          dateOfBirth: student.dateOfBirth,
-          gender: student.gender,
-          address: student.address,
-          city: student.city,
-          country: student.country,
-          profilePicturePath: student.profilePicturePath,
-          degree: student.degree,
-          institution: student.institution,
-          graduationYear: student.graduationYear,
-          gpa: student.gpa,
-          ieltsScore: student.ieltsScore,
-          englishLevel: student.englishLevel,
-          workExperience: JSON.stringify(student.workExperience || []),
-          skills: JSON.stringify(student.skills || []),
-          coursesOfInterest: JSON.stringify(student.coursesOfInterest || []),
-          locationInterests: JSON.stringify(student.locationInterests || []),
-          github: student.github,
-          linkedin: student.linkedin,
-          portfolio: student.portfolio,
-          cvPath,
-          passwordHash: student.passwordHash,
-          status: student.status
-        },
-        type: Student.sequelize.QueryTypes.SELECT
-      }
-    );
+    // Update CV path
+    student.cvPath = cvPath;
+    await student.save();
 
-    logger.info(`CV uploaded: ${studentId}`);
+    logger.info(`CV uploaded and saved to DB: ${studentId}, cvPath: ${student.cvPath}`);
 
     res.json(
       createSuccessResponse('CV uploaded successfully', {
@@ -205,20 +158,45 @@ const uploadCV = async (req, res) => {
 const extractCVData = async (req, res) => {
   try {
     const studentId = req.studentId;
-    const student = await Student.findByPk(studentId);
+    logger.info(`Extracting CV for student: ${studentId}`);
+    
+    const student = await Student.findById(studentId);
+
+    if (!student) {
+      logger.error(`Student not found: ${studentId}`);
+      return res.status(404).json(
+        createErrorResponse('Student not found')
+      );
+    }
+
+    logger.info(`Student cvPath from DB: ${student.cvPath}`);
 
     if (!student.cvPath) {
+      logger.error(`No cvPath for student: ${studentId}`);
       return res.status(400).json(
         createErrorResponse('No CV file found. Please upload a CV first.')
       );
     }
 
     const cvFilePath = path.join(__dirname, '..', student.cvPath);
+    logger.info(`Full CV file path: ${cvFilePath}`);
+    
+    // Check if file exists
+    if (!fs.existsSync(cvFilePath)) {
+      logger.error(`CV file not found at path: ${cvFilePath}`);
+      logger.error(`Attempted path construction: __dirname='${__dirname}', cvPath='${student.cvPath}'`);
+      return res.status(404).json(
+        createErrorResponse('CV file not found on server. Please upload again.')
+      );
+    }
+
+    logger.info(`Extracting CV data from: ${cvFilePath}`);
 
     // Extract CV data
     const result = await CVExtractionService.extractCvData(cvFilePath);
 
     if (!result.success) {
+      logger.error(`CV extraction failed: ${result.error}`);
       return res.status(500).json(
         createErrorResponse('Failed to extract CV data', result.error)
       );
@@ -243,7 +221,13 @@ const extractCVData = async (req, res) => {
 const deleteCV = async (req, res) => {
   try {
     const studentId = req.studentId;
-    const student = await Student.findByPk(studentId);
+    const student = await Student.findById(studentId);
+
+    if (!student) {
+      return res.status(404).json(
+        createErrorResponse('Student not found')
+      );
+    }
 
     if (!student.cvPath) {
       return res.status(400).json(
@@ -256,48 +240,8 @@ const deleteCV = async (req, res) => {
     deleteFile(cvFilePath);
 
     // Update database
-    await Student.sequelize.query(
-      `SELECT mentora_ref.sp_ref_student_modify(
-        :studentId, :firstName, :lastName, :email, :phone,
-        :nic, :dateOfBirth, :gender, :address, :city, :country, :profilePicturePath,
-        :degree, :institution, :graduationYear, :gpa, :ieltsScore, :englishLevel,
-        :workExperience, :skills, :coursesOfInterest, :locationInterests,
-        :github, :linkedin, :portfolio, NULL,
-        :passwordHash, :status, :studentId
-      )`,
-      {
-        replacements: {
-          studentId: student.studentId,
-          firstName: student.firstName,
-          lastName: student.lastName,
-          email: student.email,
-          phone: student.phone,
-          nic: student.nic,
-          dateOfBirth: student.dateOfBirth,
-          gender: student.gender,
-          address: student.address,
-          city: student.city,
-          country: student.country,
-          profilePicturePath: student.profilePicturePath,
-          degree: student.degree,
-          institution: student.institution,
-          graduationYear: student.graduationYear,
-          gpa: student.gpa,
-          ieltsScore: student.ieltsScore,
-          englishLevel: student.englishLevel,
-          workExperience: JSON.stringify(student.workExperience || []),
-          skills: JSON.stringify(student.skills || []),
-          coursesOfInterest: JSON.stringify(student.coursesOfInterest || []),
-          locationInterests: JSON.stringify(student.locationInterests || []),
-          github: student.github,
-          linkedin: student.linkedin,
-          portfolio: student.portfolio,
-          passwordHash: student.passwordHash,
-          status: student.status
-        },
-        type: Student.sequelize.QueryTypes.SELECT
-      }
-    );
+    student.cvPath = undefined;
+    await student.save();
 
     logger.info(`CV deleted: ${studentId}`);
 
@@ -327,57 +271,24 @@ const uploadProfilePicture = async (req, res) => {
     const profilePicturePath = req.file.path;
 
     // Get current student
-    const student = await Student.findByPk(studentId);
+    const student = await Student.findById(studentId);
+    
+    if (!student) {
+      // Delete uploaded file if student not found
+      deleteFile(profilePicturePath);
+      return res.status(404).json(
+        createErrorResponse('Student not found')
+      );
+    }
     
     // Delete old profile picture if exists
-    if (student.profilePicturePath) {
-      deleteFile(path.join(__dirname, '..', student.profilePicturePath));
+    if (student.profilePicture) {
+      deleteFile(path.join(__dirname, '..', student.profilePicture));
     }
 
     // Update profile picture path
-    await Student.sequelize.query(
-      `SELECT mentora_ref.sp_ref_student_modify(
-        :studentId, :firstName, :lastName, :email, :phone,
-        :nic, :dateOfBirth, :gender, :address, :city, :country, :profilePicturePath,
-        :degree, :institution, :graduationYear, :gpa, :ieltsScore, :englishLevel,
-        :workExperience, :skills, :coursesOfInterest, :locationInterests,
-        :github, :linkedin, :portfolio, :cvPath,
-        :passwordHash, :status, :studentId
-      )`,
-      {
-        replacements: {
-          studentId: student.studentId,
-          firstName: student.firstName,
-          lastName: student.lastName,
-          email: student.email,
-          phone: student.phone,
-          nic: student.nic,
-          dateOfBirth: student.dateOfBirth,
-          gender: student.gender,
-          address: student.address,
-          city: student.city,
-          country: student.country,
-          profilePicturePath,
-          degree: student.degree,
-          institution: student.institution,
-          graduationYear: student.graduationYear,
-          gpa: student.gpa,
-          ieltsScore: student.ieltsScore,
-          englishLevel: student.englishLevel,
-          workExperience: JSON.stringify(student.workExperience || []),
-          skills: JSON.stringify(student.skills || []),
-          coursesOfInterest: JSON.stringify(student.coursesOfInterest || []),
-          locationInterests: JSON.stringify(student.locationInterests || []),
-          github: student.github,
-          linkedin: student.linkedin,
-          portfolio: student.portfolio,
-          cvPath: student.cvPath,
-          passwordHash: student.passwordHash,
-          status: student.status
-        },
-        type: Student.sequelize.QueryTypes.SELECT
-      }
-    );
+    student.profilePicture = profilePicturePath;
+    await student.save();
 
     logger.info(`Profile picture uploaded: ${studentId}`);
 

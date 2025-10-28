@@ -1,5 +1,5 @@
 const jwt = require('jsonwebtoken');
-const { Student } = require('../models');
+const Student = require('../models/StudentMongo');
 const { createErrorResponse } = require('../utils/responseHelper');
 
 /**
@@ -30,7 +30,7 @@ const authenticateStudent = async (req, res, next) => {
       }
 
       // Fetch student from database
-      const student = await Student.findByPk(decoded.studentId);
+      const student = await Student.findById(decoded.studentId);
       
       if (!student) {
         return res.status(401).json(
@@ -38,7 +38,7 @@ const authenticateStudent = async (req, res, next) => {
         );
       }
 
-      if (student.status !== 'Active') {
+      if (student.status !== 'active') {
         return res.status(401).json(
           createErrorResponse('Student account is not active.')
         );
@@ -86,8 +86,8 @@ const optionalAuth = async (req, res, next) => {
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
       
       if (decoded.studentId) {
-        const student = await Student.findByPk(decoded.studentId);
-        if (student && student.status === 'Active') {
+        const student = await Student.findById(decoded.studentId);
+        if (student && student.status === 'active') {
           req.student = student;
           req.studentId = decoded.studentId;
         }
