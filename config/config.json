@@ -1,0 +1,27 @@
+{
+  "development": {
+    "username": "postgres",
+    "password": "password",
+    "database": "mentora_consulting",
+    "host": "localhost",
+    "port": 5432,
+    "dialect": "postgres"
+  },
+  "test": {
+    "username": "postgres",
+    "password": "password",
+    "database": "mentora_consulting_test",
+    "host": "localhost",
+    "port": 5432,
+    "dialect": "postgres"
+  },
+  "production": {
+    "username": "postgres",
+    "password": "password",
+    "database": "mentora_consulting",
+    "host": "localhost",
+    "port": 5432,
+    "dialect": "postgres",
+    "logging": false
+  }
+}
