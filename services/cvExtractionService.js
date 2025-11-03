@@ -101,9 +101,9 @@ class CVExtractionService {
       skills: [],
       
       // Reference Links
-      github: '',
-      linkedin: '',
-      portfolio: ''
+      githubUrl: '',
+      linkedinUrl: '',
+      portfolioUrl: ''
     };
 
     try {
@@ -407,13 +407,13 @@ class CVExtractionService {
       const githubRegex = /github\.com\/[a-zA-Z0-9\-_]+/g;
       const githubMatch = text.match(githubRegex);
       if (githubMatch && githubMatch.length > 0) {
-        structured.github = 'https://' + githubMatch[0];
+        structured.githubUrl = 'https://' + githubMatch[0];
       }
 
       const linkedinRegex = /linkedin\.com\/in\/[a-zA-Z0-9\-_]+/g;
       const linkedinMatch = text.match(linkedinRegex);
       if (linkedinMatch && linkedinMatch.length > 0) {
-        structured.linkedin = 'https://' + linkedinMatch[0];
+        structured.linkedinUrl = 'https://' + linkedinMatch[0];
       }
 
       const portfolioRegex = /(portfolio|website|personal).*?https?:\/\/[^\s]+/gi;
@@ -421,7 +421,7 @@ class CVExtractionService {
       if (portfolioMatch && portfolioMatch.length > 0) {
         const urlMatch = portfolioMatch[0].match(/https?:\/\/[^\s]+/);
         if (urlMatch) {
-          structured.portfolio = urlMatch[0];
+          structured.portfolioUrl = urlMatch[0];
         }
       }
 
