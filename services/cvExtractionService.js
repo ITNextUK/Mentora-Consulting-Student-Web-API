@@ -435,143 +435,126 @@ class CVExtractionService {
       }
 
       // Enhanced work experience and projects extraction
-      const workKeywords = ['experience', 'employment', 'work history', 'job', 'position', 'company', 'projects', 'project'];
+      const workKeywords = ['experience', 'employment', 'work history', 'projects', 'project'];
       let inWorkSection = false;
+      let inProjectSection = false;
       const workExperiences = [];
 
       for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
+        const line = lines[i].trim();
         const lineLower = line.toLowerCase();
         
-        if (workKeywords.some(keyword => lineLower.includes(keyword))) {
+        // Check if we're entering work/project section
+        if (lineLower === 'work experience' || lineLower.includes('employment')) {
           inWorkSection = true;
+          inProjectSection = false;
+          continue;
+        }
+        if (lineLower === 'projects' || lineLower === 'project') {
+          inProjectSection = true;
+          inWorkSection = false;
           continue;
         }
 
-        if (inWorkSection && line.length > 10) {
-          // Enhanced date parsing for various formats
-          const parseDates = (text) => {
-            const result = { startDate: '', endDate: '' };
-            
-            // Try chrono-node first for natural language dates
-            const dates = chrono.parse(text);
-            if (dates && dates.length > 0) {
-              const firstDate = dates[0].start;
-              if (firstDate) {
-                const month = firstDate.get('month');
-                const year = firstDate.get('year');
-                if (month && year) {
-                  result.startDate = `${year}-${String(month).padStart(2, '0')}`;
-                } else if (year) {
-                  result.startDate = year.toString();
-                }
-              }
-              
-              // Check for end date
-              if (dates[0].end) {
-                const endDate = dates[0].end;
-                const month = endDate.get('month');
-                const year = endDate.get('year');
-                if (month && year) {
-                  result.endDate = `${year}-${String(month).padStart(2, '0')}`;
-                } else if (year) {
-                  result.endDate = year.toString();
-                }
-              } else if (dates.length > 1) {
-                const secondDate = dates[1].start;
-                const month = secondDate.get('month');
-                const year = secondDate.get('year');
-                if (month && year) {
-                  result.endDate = `${year}-${String(month).padStart(2, '0')}`;
-                } else if (year) {
-                  result.endDate = year.toString();
-                }
-              }
-            }
-            
-            // Check for "present", "current", "ongoing"
-            if (/present|current|ongoing|now/i.test(text)) {
-              result.endDate = 'Present';
-            }
-            
-            // Fallback: regex for common date formats
-            if (!result.startDate) {
-              const datePattern = /(\w+\s+\d{4}|\d{4})/g;
-              const matches = text.match(datePattern);
-              if (matches && matches.length > 0) {
-                result.startDate = matches[0];
-                if (matches.length > 1) {
-                  result.endDate = matches[1];
-                }
-              }
-            }
-            
-            return result;
-          };
+        // Skip false positives
+        if (lineLower.includes('date of birth') || lineLower.includes('personal details') || lineLower.includes('contact')) {
+          continue;
+        }
+
+        // Enhanced date parsing for various formats
+        const parseDates = (text) => {
+          const result = { startDate: '', endDate: '' };
           
-          // Look for project patterns (Project Name | Company (Date))
-          if (line.includes('|') && (line.includes('(') || line.includes('20'))) {
-            const parts = line.split('|');
-            if (parts.length >= 2) {
-              const projectName = parts[0]?.trim() || '';
-              const companyAndDate = parts[1]?.trim() || '';
+          // Try chrono-node first for natural language dates
+          const dates = chrono.parse(text);
+          if (dates && dates.length > 0) {
+            const firstDate = dates[0].start;
+            if (firstDate) {
+              const month = firstDate.get('month');
+              const year = firstDate.get('year');
+              if (month && year) {
+                result.startDate = `${year}-${String(month).padStart(2, '0')}-01`;
+              } else if (year) {
+                result.startDate = `${year}-01-01`;
+              }
+            }
+            
+            // Check for end date
+            if (dates[0].end) {
+              const endDate = dates[0].end;
+              const month = endDate.get('month');
+              const year = endDate.get('year');
+              if (month && year) {
+                result.endDate = `${year}-${String(month).padStart(2, '0')}-01`;
+              } else if (year) {
+                result.endDate = `${year}-12-31`;
+              }
+            } else if (dates.length > 1) {
+              const secondDate = dates[1].start;
+              const month = secondDate.get('month');
+              const year = secondDate.get('year');
+              if (month && year) {
+                result.endDate = `${year}-${String(month).padStart(2, '0')}-01`;
+              } else if (year) {
+                result.endDate = `${year}-12-31`;
+              }
+            }
+          }
+          
+          // Check for "present", "current", "ongoing"
+          if (/present|current|ongoing|now/i.test(text)) {
+            result.endDate = new Date().toISOString().split('T')[0];
+          }
+          
+          return result;
+        };
+
+        // Pattern: "Position/Project Name    Date1 – Date2"
+        // This handles both work experience and projects with dates on the same line
+        if ((inWorkSection || inProjectSection) && line.length > 10) {
+          // Check if line contains a date range (e.g., "Oct 2023 – April 2024" or "Nov 2023 – Nov 2024")
+          const dateRangePattern = /(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+20\d{2}\s*[–\-—]\s*(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+20\d{2}/i;
+          
+          if (dateRangePattern.test(line)) {
+            // Extract the position/project name (everything before the date)
+            const titleMatch = line.match(/^(.+?)\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)/i);
+            if (titleMatch) {
+              const position = titleMatch[1].trim();
+              const dates = parseDates(line);
               
-              // Extract dates using enhanced parser
-              const dates = parseDates(companyAndDate);
+              // Get company name from next line if in work experience section
+              let company = 'Not specified';
+              if (inWorkSection && i + 1 < lines.length) {
+                const nextLine = lines[i + 1].trim();
+                // Check if next line is company name (not a bullet point or technology line)
+                if (nextLine && !nextLine.startsWith('•') && !nextLine.startsWith('-') && nextLine.length < 100) {
+                  company = nextLine;
+                  i++; // Skip the next line since we used it
+                }
+              }
               
-              // Extract company name (remove date part and parentheses)
-              const company = companyAndDate
-                .replace(/\([^)]+\)/g, '')
-                .replace(/\d{4}/g, '')
-                .replace(/\s+/g, ' ')
-                .replace(/[-–—]/g, '')
-                .trim();
-              
-              if (projectName) {
+              if (position && dates.startDate) {
                 workExperiences.push({
-                  company: company || 'Not specified',
-                  position: projectName,
+                  company: company,
+                  position: position,
                   startDate: dates.startDate,
-                  endDate: dates.endDate,
+                  endDate: dates.endDate || new Date().toISOString().split('T')[0],
                   description: ''
                 });
               }
             }
           }
-          // Look for date range patterns: "Month YYYY - Month YYYY" or "YYYY - YYYY"
-          else if (/\d{4}/.test(line) && (line.includes('-') || line.includes('–') || line.includes('to'))) {
-            const dates = parseDates(line);
-            const titleMatch = line.split(/\d{4}/)[0]?.trim();
-            
-            if (titleMatch && dates.startDate) {
-              workExperiences.push({
-                company: 'Not specified',
-                position: titleMatch,
-                startDate: dates.startDate,
-                endDate: dates.endDate || 'Present',
-                description: ''
-              });
-            }
-          }
-          // Look for traditional work experience patterns
-          else if (line.includes(' at ') && line.length < 100) {
-            const parts = line.split(' at ');
-            if (parts.length >= 2) {
-              const dates = parseDates(line);
-              workExperiences.push({
-                company: parts[1]?.trim() || 'Not specified',
-                position: parts[0]?.trim() || '',
-                startDate: dates.startDate,
-                endDate: dates.endDate,
-                description: ''
-              });
-            }
-          }
         }
 
         // Stop at next major section
-        if (inWorkSection && (lineLower.includes('technical skills') || lineLower.includes('education') || lineLower.includes('strengths'))) {
-          break;
+        if ((inWorkSection || inProjectSection) && (
+          lineLower.includes('technical skills') || 
+          lineLower.includes('strengths') ||
+          lineLower === 'skills' ||
+          lineLower === 'education'
+        )) {
+          inWorkSection = false;
+          inProjectSection = false;
         }
       }
 
