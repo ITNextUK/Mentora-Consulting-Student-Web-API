@@ -2,6 +2,12 @@ const pdfParse = require('pdf-parse');
 const mammoth = require('mammoth');
 const path = require('path');
 const fs = require('fs');
+const { parsePhoneNumber } = require('libphonenumber-js');
+const chrono = require('chrono-node');
+const emailAddresses = require('email-addresses');
+const urlRegex = require('url-regex-safe');
+const natural = require('natural');
+const compromise = require('compromise');
 
 class CVExtractionService {
   /**
@@ -110,41 +116,86 @@ class CVExtractionService {
       const text = rawData.text || '';
       const lines = text.split('\n').map(line => line.trim()).filter(line => line.length > 0);
 
-      // Enhanced name extraction - look for name patterns
-      for (let i = 0; i < Math.min(5, lines.length); i++) {
-        const line = lines[i].trim();
-        // Skip lines that look like contact info or headers
-        if (line.includes('@') || line.includes('phone') || line.includes('email') || 
-            line.includes('address') || line.includes('resume') || line.includes('cv')) {
-          continue;
+      // Enhanced name extraction using NLP
+      const nameDoc = compromise(text);
+      const people = nameDoc.people().out('array');
+      
+      if (people && people.length > 0) {
+        // Take the first person name found
+        const fullName = people[0];
+        const nameParts = fullName.split(/\s+/);
+        if (nameParts.length >= 2) {
+          structured.firstName = nameParts[0];
+          structured.lastName = nameParts.slice(1).join(' ');
+        } else {
+          structured.firstName = fullName;
         }
-        
-        // Look for name patterns (2-4 words, no special characters except hyphens)
-        if (line.length > 3 && line.length < 50 && /^[A-Za-z\s\-\.]+$/.test(line)) {
-          const nameParts = line.split(/\s+/);
-          if (nameParts.length >= 2 && nameParts.length <= 4) {
-            structured.firstName = nameParts[0];
-            structured.lastName = nameParts.slice(1).join(' ');
-            break;
+      }
+      
+      // Fallback: Look for name patterns in first few lines
+      if (!structured.firstName) {
+        for (let i = 0; i < Math.min(5, lines.length); i++) {
+          const line = lines[i].trim();
+          // Skip lines that look like contact info or headers
+          if (line.includes('@') || line.includes('phone') || line.includes('email') || 
+              line.includes('address') || line.includes('resume') || line.includes('cv') ||
+              line.toLowerCase().includes('curriculum')) {
+            continue;
+          }
+          
+          // Look for name patterns (2-4 words, primarily letters)
+          if (line.length > 3 && line.length < 50 && /^[A-Za-z\s\-\.]+$/.test(line)) {
+            const nameParts = line.split(/\s+/);
+            if (nameParts.length >= 2 && nameParts.length <= 4) {
+              structured.firstName = nameParts[0];
+              structured.lastName = nameParts.slice(1).join(' ');
+              break;
+            }
           }
         }
       }
 
-      // Enhanced email extraction with better regex
-      const emailRegex = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
-      const emailMatches = text.match(emailRegex);
-      if (emailMatches && emailMatches.length > 0) {
-        // Take the first valid email, prefer personal emails over company emails
-        const personalEmail = emailMatches.find(email => 
-          !email.includes('noreply') && 
-          !email.includes('no-reply') && 
-          !email.includes('admin@') &&
-          !email.includes('info@')
+      // Enhanced email extraction using email-addresses library
+      const parsedEmails = emailAddresses.parseAddressList(text);
+      if (parsedEmails && parsedEmails.length > 0) {
+        // Take the first valid email
+        const validEmail = parsedEmails.find(email => 
+          email.address && 
+          !email.address.includes('noreply') && 
+          !email.address.includes('no-reply') && 
+          !email.address.includes('admin@') &&
+          !email.address.includes('info@')
         );
-        structured.email = personalEmail || emailMatches[0];
+        
+        if (validEmail) {
+          structured.email = validEmail.address;
+          // Extract name from email if not already found
+          if (!structured.firstName && validEmail.name) {
+            const nameParts = validEmail.name.split(/\s+/);
+            if (nameParts.length >= 2) {
+              structured.firstName = nameParts[0];
+              structured.lastName = nameParts.slice(1).join(' ');
+            }
+          }
+        }
+      }
+      
+      // Fallback: Basic regex if library doesn't find email
+      if (!structured.email) {
+        const emailRegex = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
+        const emailMatches = text.match(emailRegex);
+        if (emailMatches && emailMatches.length > 0) {
+          const personalEmail = emailMatches.find(email => 
+            !email.includes('noreply') && 
+            !email.includes('no-reply') && 
+            !email.includes('admin@') &&
+            !email.includes('info@')
+          );
+          structured.email = personalEmail || emailMatches[0];
+        }
       }
 
-      // Enhanced phone number extraction - international formats
+      // Enhanced phone number extraction using libphonenumber-js
       const phoneRegexes = [
         /(\+?94|0)?[0-9]{2,3}[-\s]?[0-9]{7}/g, // Sri Lankan format
         /(\+?1[-.\s]?)?\(?([0-9]{3})\)?[-.\s]?([0-9]{3})[-.\s]?([0-9]{4})/g, // US format
@@ -156,35 +207,111 @@ class CVExtractionService {
       for (const regex of phoneRegexes) {
         const phoneMatch = text.match(regex);
         if (phoneMatch && phoneMatch.length > 0) {
-          structured.phone = phoneMatch[0].replace(/[\s\-\(\)\.]/g, '');
-          break;
-        }
-      }
-
-      // Extract address information
-      const addressKeywords = ['address', 'location', 'province', 'city', 'country'];
-      for (let i = 0; i < lines.length; i++) {
-        const line = lines[i].toLowerCase();
-        if (addressKeywords.some(keyword => line.includes(keyword))) {
-          // Look for address in the same line or next few lines
-          for (let j = i; j < Math.min(i + 3, lines.length); j++) {
-            const addressLine = lines[j];
-            if (addressLine.includes(',') && addressLine.length > 10) {
-              structured.address = addressLine;
-              const addressParts = addressLine.split(',');
-          if (addressParts.length >= 2) {
-            structured.city = addressParts[addressParts.length - 2]?.trim() || '';
-            structured.country = addressParts[addressParts.length - 1]?.trim() || '';
-          }
-              break;
+          const rawPhone = phoneMatch[0];
+          
+          // Try to parse and validate using libphonenumber-js
+          try {
+            // Try common countries
+            const countries = ['LK', 'US', 'GB', 'IN', 'AU', 'CA'];
+            let parsedPhone = null;
+            
+            for (const country of countries) {
+              try {
+                parsedPhone = parsePhoneNumber(rawPhone, country);
+                if (parsedPhone && parsedPhone.isValid()) {
+                  // Format as international number
+                  structured.phone = parsedPhone.formatInternational();
+                  break;
+                }
+              } catch (e) {
+                continue;
+              }
             }
+            
+            // If no valid parse, use cleaned raw phone
+            if (!structured.phone) {
+              structured.phone = rawPhone.replace(/[\s\-\(\)\.]/g, '');
+            }
+            break;
+          } catch (error) {
+            // Fallback to simple cleaning
+            structured.phone = rawPhone.replace(/[\s\-\(\)\.]/g, '');
+            break;
           }
-          break;
         }
       }
 
-      // Extract education information
-      const educationKeywords = ['education', 'degree', 'university', 'college', 'institute', 'bachelor', 'master', 'phd'];
+      // Enhanced location/address extraction using NLP
+      const locationDoc = compromise(text);
+      const places = locationDoc.places().out('array');
+      
+      if (places && places.length > 0) {
+        // Take the first few places mentioned
+        const topPlaces = places.slice(0, 3);
+        
+        // Try to identify city and country
+        for (const place of topPlaces) {
+          if (!structured.city && place.length < 30) {
+            structured.city = place;
+          } else if (!structured.country && place.length < 30) {
+            structured.country = place;
+          }
+        }
+        
+        // Build address from places
+        if (topPlaces.length > 0) {
+          structured.address = topPlaces.join(', ');
+        }
+      }
+      
+      // Fallback: Extract address information using keywords
+      if (!structured.address) {
+        const addressKeywords = ['address', 'location', 'province', 'city', 'country'];
+        for (let i = 0; i < lines.length; i++) {
+          const line = lines[i].toLowerCase();
+          if (addressKeywords.some(keyword => line.includes(keyword))) {
+            // Look for address in the same line or next few lines
+            for (let j = i; j < Math.min(i + 3, lines.length); j++) {
+              const addressLine = lines[j];
+              if (addressLine.includes(',') && addressLine.length > 10) {
+                structured.address = addressLine;
+                const addressParts = addressLine.split(',');
+                if (addressParts.length >= 2) {
+                  if (!structured.city) structured.city = addressParts[addressParts.length - 2]?.trim() || '';
+                  if (!structured.country) structured.country = addressParts[addressParts.length - 1]?.trim() || '';
+                }
+                break;
+              }
+            }
+            break;
+          }
+        }
+      }
+
+      // Enhanced education information extraction using NLP
+      const educationLevels = {
+        'PhD': ['phd', 'ph.d', 'doctor of philosophy', 'doctorate', 'doctoral'],
+        'Masters': ['master', 'msc', 'm.sc', 'ma', 'm.a', 'mba', 'm.b.a', 'meng', 'm.eng'],
+        'Bachelors': ['bachelor', 'bsc', 'b.sc', 'ba', 'b.a', 'beng', 'b.eng', 'btech', 'b.tech'],
+        'Diploma': ['diploma', 'associate'],
+        'Certificate': ['certificate', 'certification']
+      };
+      
+      const educationKeywords = ['education', 'degree', 'university', 'college', 'institute', 'qualification', 'academic'];
+      const textLower = text.toLowerCase();
+      
+      // Detect education level
+      for (const [level, keywords] of Object.entries(educationLevels)) {
+        for (const keyword of keywords) {
+          if (textLower.includes(keyword)) {
+            structured.educationLevel = level;
+            break;
+          }
+        }
+        if (structured.educationLevel) break;
+      }
+      
+      // Extract degree and institution
       for (let i = 0; i < lines.length; i++) {
         const line = lines[i].toLowerCase();
         if (educationKeywords.some(keyword => line.includes(keyword))) {
@@ -192,43 +319,60 @@ class CVExtractionService {
           for (let j = i; j < Math.min(i + 5, lines.length); j++) {
             const eduLine = lines[j];
             if (eduLine.length > 5 && !eduLine.includes(':')) {
-              if (eduLine.includes('Bachelor') || eduLine.includes('Master') || eduLine.includes('Degree')) {
-                structured.degree = eduLine;
-              } else if (eduLine.includes('University') || eduLine.includes('College') || eduLine.includes('Institute')) {
-                structured.institution = eduLine;
+              // Check for degree
+              if (!structured.degree && (
+                eduLine.match(/bachelor|master|phd|doctorate|diploma|degree/i))) {
+                structured.degree = eduLine.trim();
+              }
+              // Check for institution
+              if (!structured.institution && (
+                eduLine.match(/university|college|institute|school/i))) {
+                structured.institution = eduLine.trim();
               }
             }
           }
-          break;
+          if (structured.degree && structured.institution) break;
         }
       }
 
-      // Enhanced graduation year extraction
-      const yearRegex = /(19|20)\d{2}/g;
-      const yearMatches = text.match(yearRegex);
-      if (yearMatches && yearMatches.length > 0) {
-        // Filter years and find the most recent one that could be graduation year
-        const years = yearMatches.map(y => parseInt(y))
-          .filter(y => y >= 1990 && y <= new Date().getFullYear())
-          .sort((a, b) => b - a); // Sort descending
-        
-        if (years.length > 0) {
-          // Look for graduation-related keywords near the year
-          const graduationKeywords = ['graduated', 'degree', 'bachelor', 'master', 'phd', 'diploma', 'certificate'];
-          let graduationYear = years[0]; // Default to most recent year
+      // Enhanced graduation year extraction using chrono-node
+      const educationKeywordsForDate = ['graduated', 'degree', 'bachelor', 'master', 'phd', 'diploma', 'certificate', 'completed'];
+      let graduationYearFound = false;
+      
+      // Use chrono to find dates near education keywords
+      for (const keyword of educationKeywordsForDate) {
+        const keywordIndex = text.toLowerCase().indexOf(keyword);
+        if (keywordIndex !== -1) {
+          const contextText = text.substring(Math.max(0, keywordIndex - 50), Math.min(text.length, keywordIndex + 100));
+          const dates = chrono.parse(contextText);
           
-          for (const year of years) {
-            const yearIndex = text.indexOf(year.toString());
-            if (yearIndex !== -1) {
-              const context = text.substring(Math.max(0, yearIndex - 50), yearIndex + 50).toLowerCase();
-              if (graduationKeywords.some(keyword => context.includes(keyword))) {
-                graduationYear = year;
+          if (dates && dates.length > 0) {
+            // Get the most recent date that makes sense for graduation
+            for (const dateResult of dates) {
+              const year = dateResult.start.get('year');
+              if (year && year >= 1990 && year <= new Date().getFullYear() + 5) {
+                structured.graduationYear = year.toString();
+                graduationYearFound = true;
                 break;
               }
             }
+            if (graduationYearFound) break;
           }
+        }
+      }
+      
+      // Fallback: Basic year extraction if chrono didn't find it
+      if (!structured.graduationYear) {
+        const yearRegex = /(19|20)\d{2}/g;
+        const yearMatches = text.match(yearRegex);
+        if (yearMatches && yearMatches.length > 0) {
+          const years = yearMatches.map(y => parseInt(y))
+            .filter(y => y >= 1990 && y <= new Date().getFullYear())
+            .sort((a, b) => b - a);
           
-          structured.graduationYear = graduationYear.toString();
+          if (years.length > 0) {
+            structured.graduationYear = years[0].toString();
+          }
         }
       }
 
@@ -329,19 +473,59 @@ class CVExtractionService {
 
       structured.workExperience = workExperiences;
 
-      // Enhanced skills extraction
-      const skillsKeywords = ['technical skills', 'skills', 'technologies', 'programming', 'languages', 'tools', 'expertise', 'competencies'];
+      // Enhanced skills extraction using NLP and TF-IDF
+      const skillsKeywords = ['technical skills', 'skills', 'technologies', 'programming', 'languages', 'tools', 'expertise', 'competencies', 'proficient'];
       let inSkillsSection = false;
       const skills = [];
-      const commonTechSkills = [
-        'JavaScript', 'Python', 'Java', 'C#', 'C++', 'PHP', 'Ruby', 'Go', 'Swift', 'Kotlin',
-        'React', 'Angular', 'Vue.js', 'Node.js', 'Express', 'Django', 'Flask', 'Laravel', 'Spring',
-        'HTML', 'CSS', 'SASS', 'LESS', 'Bootstrap', 'Tailwind', 'Material-UI',
-        'MySQL', 'PostgreSQL', 'MongoDB', 'Redis', 'SQLite', 'Oracle',
-        'AWS', 'Azure', 'Google Cloud', 'Docker', 'Kubernetes', 'Jenkins', 'Git',
-        'REST API', 'GraphQL', 'Microservices', 'Agile', 'Scrum', 'DevOps'
+      
+      // Comprehensive tech skills database
+      const techSkillsDatabase = [
+        // Programming Languages
+        'JavaScript', 'TypeScript', 'Python', 'Java', 'C#', 'C++', 'C', 'PHP', 'Ruby', 'Go', 'Swift', 'Kotlin', 'Rust', 'Scala', 'R', 'MATLAB',
+        // Frontend
+        'React', 'Angular', 'Vue.js', 'Vue', 'Svelte', 'Next.js', 'Nuxt.js', 'Gatsby', 'Remix',
+        'HTML', 'HTML5', 'CSS', 'CSS3', 'SASS', 'SCSS', 'LESS', 'Bootstrap', 'Tailwind CSS', 'Material-UI', 'Ant Design', 'Chakra UI',
+        'jQuery', 'Redux', 'MobX', 'Zustand', 'Webpack', 'Vite', 'Rollup', 'Parcel',
+        // Backend
+        'Node.js', 'Express', 'Express.js', 'Nest.js', 'Fastify', 'Koa',
+        'Django', 'Flask', 'FastAPI', 'Laravel', 'Symfony', 'CodeIgniter',
+        'Spring', 'Spring Boot', 'Hibernate', 'ASP.NET', '.NET Core', '.NET',
+        'Ruby on Rails', 'Rails',
+        // Mobile
+        'React Native', 'Flutter', 'Ionic', 'Xamarin', 'Android', 'iOS', 'SwiftUI',
+        // Databases
+        'MySQL', 'PostgreSQL', 'MongoDB', 'Redis', 'SQLite', 'Oracle', 'SQL Server', 'MariaDB',
+        'Cassandra', 'DynamoDB', 'Firebase', 'Firestore', 'Supabase', 'PlanetScale',
+        'Elasticsearch', 'Neo4j', 'CouchDB',
+        // Cloud & DevOps
+        'AWS', 'Azure', 'Google Cloud', 'GCP', 'Heroku', 'Vercel', 'Netlify', 'DigitalOcean',
+        'Docker', 'Kubernetes', 'K8s', 'Jenkins', 'CircleCI', 'Travis CI', 'GitHub Actions', 'GitLab CI',
+        'Terraform', 'Ansible', 'Chef', 'Puppet', 'Vagrant',
+        // Version Control
+        'Git', 'GitHub', 'GitLab', 'Bitbucket', 'SVN',
+        // APIs & Architecture
+        'REST API', 'RESTful', 'GraphQL', 'gRPC', 'WebSocket', 'Socket.io',
+        'Microservices', 'Monolithic', 'Serverless', 'SOA', 'Event-Driven',
+        // Testing
+        'Jest', 'Mocha', 'Chai', 'Jasmine', 'Cypress', 'Selenium', 'Puppeteer', 'Playwright',
+        'JUnit', 'TestNG', 'PyTest', 'PHPUnit', 'RSpec',
+        // Methodologies
+        'Agile', 'Scrum', 'Kanban', 'DevOps', 'CI/CD', 'TDD', 'BDD',
+        // Data Science & ML
+        'TensorFlow', 'PyTorch', 'Keras', 'Scikit-learn', 'Pandas', 'NumPy', 'Jupyter',
+        'Machine Learning', 'Deep Learning', 'NLP', 'Computer Vision',
+        // Other
+        'Linux', 'Unix', 'Windows', 'macOS',
+        'Apache', 'Nginx', 'Tomcat',
+        'JIRA', 'Confluence', 'Slack', 'Trello',
+        'Figma', 'Adobe XD', 'Sketch', 'Photoshop', 'Illustrator'
       ];
 
+      // Use compromise to identify technical terms and concepts
+      const doc = compromise(text);
+      const nouns = doc.nouns().out('array');
+      
+      // Extract skills from skills section
       for (let i = 0; i < lines.length; i++) {
         const line = lines[i].toLowerCase();
         
@@ -360,17 +544,25 @@ class CVExtractionService {
           // Split by common separators
           const skillItems = line.split(/[,;|•\-\n\t]/).map(s => s.trim()).filter(s => s.length > 0);
           
-          // Check if any common tech skills are mentioned
+          // Match against tech skills database
           for (const item of skillItems) {
-            const itemLower = item.toLowerCase();
-            const foundSkill = commonTechSkills.find(skill => 
-              skill.toLowerCase().includes(itemLower) || itemLower.includes(skill.toLowerCase())
+            const itemClean = item.replace(/[()[\]{}]/g, '').trim();
+            if (itemClean.length < 2) continue;
+            
+            const foundSkill = techSkillsDatabase.find(skill => 
+              skill.toLowerCase() === itemClean.toLowerCase() ||
+              itemClean.toLowerCase().includes(skill.toLowerCase()) ||
+              skill.toLowerCase().includes(itemClean.toLowerCase())
             );
             
-            if (foundSkill) {
+            if (foundSkill && !skills.includes(foundSkill)) {
               skills.push(foundSkill);
-            } else if (item.length > 1 && item.length < 50 && /^[A-Za-z0-9\s\-\+\.]+$/.test(item)) {
-              skills.push(item);
+            } else if (itemClean.length > 2 && itemClean.length < 30 && !skills.includes(itemClean)) {
+              // Add as-is if it looks like a skill
+              const capitalizedSkill = itemClean.split(' ').map(word => 
+                word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()
+              ).join(' ');
+              skills.push(capitalizedSkill);
             }
           }
         }
@@ -382,12 +574,20 @@ class CVExtractionService {
         }
       }
 
-      // Also search for skills throughout the entire document
-      for (const skill of commonTechSkills) {
-        if (text.toLowerCase().includes(skill.toLowerCase()) && !skills.includes(skill)) {
-          skills.push(skill);
+      // Also search for skills throughout the entire document using TF-IDF
+      const TfIdf = natural.TfIdf;
+      const tfidf = new TfIdf();
+      tfidf.addDocument(text);
+      
+      techSkillsDatabase.forEach(skill => {
+        const score = tfidf.tfidf(skill, 0);
+        if (score > 0.1 && !skills.includes(skill)) {
+          // Verify the skill actually appears in the text
+          if (text.toLowerCase().includes(skill.toLowerCase())) {
+            skills.push(skill);
+          }
         }
-      }
+      });
 
       // Clean up skills and remove duplicates
       const cleanedSkills = skills
@@ -403,25 +603,49 @@ class CVExtractionService {
       
       structured.skills = [...new Set(cleanedSkills)]; // Remove duplicates
 
-      // Extract social links
-      const githubRegex = /github\.com\/[a-zA-Z0-9\-_]+/g;
-      const githubMatch = text.match(githubRegex);
-      if (githubMatch && githubMatch.length > 0) {
-        structured.githubUrl = 'https://' + githubMatch[0];
-      }
+      // Enhanced social links extraction using url-regex-safe
+      try {
+        const urlMatches = text.match(urlRegex({ strict: false }));
+        if (urlMatches && urlMatches.length > 0) {
+          // Filter and categorize URLs
+          for (const url of urlMatches) {
+            const lowerUrl = url.toLowerCase();
+            
+            // GitHub
+            if (lowerUrl.includes('github.com') && !structured.githubUrl) {
+              structured.githubUrl = url.startsWith('http') ? url : `https://${url}`;
+            }
+            // LinkedIn
+            else if (lowerUrl.includes('linkedin.com') && !structured.linkedinUrl) {
+              structured.linkedinUrl = url.startsWith('http') ? url : `https://${url}`;
+            }
+            // Portfolio (common portfolio domains)
+            else if (!structured.portfolioUrl && 
+                     (lowerUrl.includes('portfolio') || 
+                      lowerUrl.includes('behance.com') || 
+                      lowerUrl.includes('dribbble.com') ||
+                      lowerUrl.includes('vercel.app') ||
+                      lowerUrl.includes('netlify.app') ||
+                      lowerUrl.includes('herokuapp.com') ||
+                      lowerUrl.match(/[a-z0-9-]+\.(dev|me|io)$/))) {
+              structured.portfolioUrl = url.startsWith('http') ? url : `https://${url}`;
+            }
+          }
+        }
+      } catch (error) {
+        console.error('URL extraction error, falling back to regex:', error);
+        
+        // Fallback: Original regex patterns
+        const githubRegex = /github\.com\/[a-zA-Z0-9\-_]+/g;
+        const githubMatch = text.match(githubRegex);
+        if (githubMatch && githubMatch.length > 0) {
+          structured.githubUrl = 'https://' + githubMatch[0];
+        }
 
-      const linkedinRegex = /linkedin\.com\/in\/[a-zA-Z0-9\-_]+/g;
-      const linkedinMatch = text.match(linkedinRegex);
-      if (linkedinMatch && linkedinMatch.length > 0) {
-        structured.linkedinUrl = 'https://' + linkedinMatch[0];
-      }
-
-      const portfolioRegex = /(portfolio|website|personal).*?https?:\/\/[^\s]+/gi;
-      const portfolioMatch = text.match(portfolioRegex);
-      if (portfolioMatch && portfolioMatch.length > 0) {
-        const urlMatch = portfolioMatch[0].match(/https?:\/\/[^\s]+/);
-        if (urlMatch) {
-          structured.portfolioUrl = urlMatch[0];
+        const linkedinRegex = /linkedin\.com\/in\/[a-zA-Z0-9\-_]+/g;
+        const linkedinMatch = text.match(linkedinRegex);
+        if (linkedinMatch && linkedinMatch.length > 0) {
+          structured.linkedinUrl = 'https://' + linkedinMatch[0];
         }
       }
 
