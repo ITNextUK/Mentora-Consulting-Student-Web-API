@@ -246,21 +246,33 @@ class CVExtractionService {
       const places = locationDoc.places().out('array');
       
       if (places && places.length > 0) {
-        // Take the first few places mentioned
-        const topPlaces = places.slice(0, 3);
+        // Clean and deduplicate places
+        const uniquePlaces = [...new Set(places.map(p => p.trim()))];
+        const cleanedPlaces = uniquePlaces.filter(p => p.length > 2 && p.length < 50);
         
-        // Try to identify city and country
-        for (const place of topPlaces) {
-          if (!structured.city && place.length < 30) {
-            structured.city = place;
-          } else if (!structured.country && place.length < 30) {
-            structured.country = place;
-          }
+        // Try to identify city and country (avoid duplicates)
+        const locationParts = new Set();
+        for (const place of cleanedPlaces) {
+          // Split by comma and add each part
+          const parts = place.split(',').map(p => p.trim()).filter(p => p.length > 0);
+          parts.forEach(part => locationParts.add(part));
         }
         
-        // Build address from places
-        if (topPlaces.length > 0) {
-          structured.address = topPlaces.join(', ');
+        const uniqueLocationParts = Array.from(locationParts);
+        
+        // Assign city and country (last one is usually country, first is city)
+        if (uniqueLocationParts.length > 0) {
+          if (uniqueLocationParts.length === 1) {
+            // If only one location, it's likely the country
+            structured.country = uniqueLocationParts[0];
+          } else {
+            // Multiple locations: first is city, last is country
+            structured.city = uniqueLocationParts[0];
+            structured.country = uniqueLocationParts[uniqueLocationParts.length - 1];
+          }
+          
+          // Build address from unique parts
+          structured.address = uniqueLocationParts.join(', ');
         }
       }
       
@@ -275,11 +287,20 @@ class CVExtractionService {
               const addressLine = lines[j];
               if (addressLine.includes(',') && addressLine.length > 10) {
                 structured.address = addressLine;
-                const addressParts = addressLine.split(',');
-                if (addressParts.length >= 2) {
-                  if (!structured.city) structured.city = addressParts[addressParts.length - 2]?.trim() || '';
-                  if (!structured.country) structured.country = addressParts[addressParts.length - 1]?.trim() || '';
+                const addressParts = addressLine.split(',').map(p => p.trim()).filter(p => p.length > 0);
+                
+                // Remove duplicates from address parts
+                const uniqueAddressParts = [...new Set(addressParts)];
+                
+                if (uniqueAddressParts.length >= 2) {
+                  if (!structured.city) structured.city = uniqueAddressParts[0];
+                  if (!structured.country) structured.country = uniqueAddressParts[uniqueAddressParts.length - 1];
+                } else if (uniqueAddressParts.length === 1) {
+                  if (!structured.country) structured.country = uniqueAddressParts[0];
                 }
+                
+                // Rebuild address without duplicates
+                structured.address = uniqueAddressParts.join(', ');
                 break;
               }
             }
@@ -413,52 +434,135 @@ class CVExtractionService {
         }
       }
 
-      // Extract work experience and projects
-      const workKeywords = ['experience', 'employment', 'work', 'job', 'position', 'company', 'projects', 'project'];
+      // Enhanced work experience and projects extraction
+      const workKeywords = ['experience', 'employment', 'work history', 'job', 'position', 'company', 'projects', 'project'];
       let inWorkSection = false;
       const workExperiences = [];
 
       for (let i = 0; i < lines.length; i++) {
-        const line = lines[i].toLowerCase();
+        const line = lines[i];
+        const lineLower = line.toLowerCase();
         
-        if (workKeywords.some(keyword => line.includes(keyword))) {
+        if (workKeywords.some(keyword => lineLower.includes(keyword))) {
           inWorkSection = true;
           continue;
         }
 
         if (inWorkSection && line.length > 10) {
+          // Enhanced date parsing for various formats
+          const parseDates = (text) => {
+            const result = { startDate: '', endDate: '' };
+            
+            // Try chrono-node first for natural language dates
+            const dates = chrono.parse(text);
+            if (dates && dates.length > 0) {
+              const firstDate = dates[0].start;
+              if (firstDate) {
+                const month = firstDate.get('month');
+                const year = firstDate.get('year');
+                if (month && year) {
+                  result.startDate = `${year}-${String(month).padStart(2, '0')}`;
+                } else if (year) {
+                  result.startDate = year.toString();
+                }
+              }
+              
+              // Check for end date
+              if (dates[0].end) {
+                const endDate = dates[0].end;
+                const month = endDate.get('month');
+                const year = endDate.get('year');
+                if (month && year) {
+                  result.endDate = `${year}-${String(month).padStart(2, '0')}`;
+                } else if (year) {
+                  result.endDate = year.toString();
+                }
+              } else if (dates.length > 1) {
+                const secondDate = dates[1].start;
+                const month = secondDate.get('month');
+                const year = secondDate.get('year');
+                if (month && year) {
+                  result.endDate = `${year}-${String(month).padStart(2, '0')}`;
+                } else if (year) {
+                  result.endDate = year.toString();
+                }
+              }
+            }
+            
+            // Check for "present", "current", "ongoing"
+            if (/present|current|ongoing|now/i.test(text)) {
+              result.endDate = 'Present';
+            }
+            
+            // Fallback: regex for common date formats
+            if (!result.startDate) {
+              const datePattern = /(\w+\s+\d{4}|\d{4})/g;
+              const matches = text.match(datePattern);
+              if (matches && matches.length > 0) {
+                result.startDate = matches[0];
+                if (matches.length > 1) {
+                  result.endDate = matches[1];
+                }
+              }
+            }
+            
+            return result;
+          };
+          
           // Look for project patterns (Project Name | Company (Date))
-          if (line.includes('|') && line.includes('(') && line.includes(')')) {
+          if (line.includes('|') && (line.includes('(') || line.includes('20'))) {
             const parts = line.split('|');
             if (parts.length >= 2) {
               const projectName = parts[0]?.trim() || '';
               const companyAndDate = parts[1]?.trim() || '';
               
-              // Extract date from parentheses
-              const dateMatch = companyAndDate.match(/\(([^)]+)\)/);
-              const date = dateMatch ? dateMatch[1] : '';
+              // Extract dates using enhanced parser
+              const dates = parseDates(companyAndDate);
               
-              // Extract company name (remove date part)
-              const company = companyAndDate.replace(/\([^)]+\)/, '').trim();
+              // Extract company name (remove date part and parentheses)
+              const company = companyAndDate
+                .replace(/\([^)]+\)/g, '')
+                .replace(/\d{4}/g, '')
+                .replace(/\s+/g, ' ')
+                .replace(/[-–—]/g, '')
+                .trim();
               
+              if (projectName) {
+                workExperiences.push({
+                  company: company || 'Not specified',
+                  position: projectName,
+                  startDate: dates.startDate,
+                  endDate: dates.endDate,
+                  description: ''
+                });
+              }
+            }
+          }
+          // Look for date range patterns: "Month YYYY - Month YYYY" or "YYYY - YYYY"
+          else if (/\d{4}/.test(line) && (line.includes('-') || line.includes('–') || line.includes('to'))) {
+            const dates = parseDates(line);
+            const titleMatch = line.split(/\d{4}/)[0]?.trim();
+            
+            if (titleMatch && dates.startDate) {
               workExperiences.push({
-                company: company,
-                position: projectName,
-                startDate: date,
-                endDate: '',
+                company: 'Not specified',
+                position: titleMatch,
+                startDate: dates.startDate,
+                endDate: dates.endDate || 'Present',
                 description: ''
               });
             }
           }
           // Look for traditional work experience patterns
-          else if (line.includes(' at ') || line.includes(' - ') || line.includes(' | ')) {
-            const parts = line.split(/ at | - | \| /);
+          else if (line.includes(' at ') && line.length < 100) {
+            const parts = line.split(' at ');
             if (parts.length >= 2) {
+              const dates = parseDates(line);
               workExperiences.push({
-                company: parts[1]?.trim() || '',
+                company: parts[1]?.trim() || 'Not specified',
                 position: parts[0]?.trim() || '',
-                startDate: '',
-                endDate: '',
+                startDate: dates.startDate,
+                endDate: dates.endDate,
                 description: ''
               });
             }
@@ -466,7 +570,7 @@ class CVExtractionService {
         }
 
         // Stop at next major section
-        if (inWorkSection && (line.includes('technical skills') || line.includes('education') || line.includes('strengths'))) {
+        if (inWorkSection && (lineLower.includes('technical skills') || lineLower.includes('education') || lineLower.includes('strengths'))) {
           break;
         }
       }
