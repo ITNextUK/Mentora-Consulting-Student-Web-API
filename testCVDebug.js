@@ -2,7 +2,7 @@ const CVExtractionService = require('./services/cvExtractionService');
 const path = require('path');
 
 async function testExtraction() {
-  const cvPath = path.join(__dirname, 'uploads/cv/cv-690a5b98c19c22dcb0d7f87e-1762287270193-514136436.pdf');
+  const cvPath = path.join(__dirname, 'uploads/cv/cv-690a5b98c19c22dcb0d7f87e-1762291042074-43297965.pdf');
   
   try {
     const response = await CVExtractionService.extractCvData(cvPath);
@@ -39,6 +39,19 @@ async function testExtraction() {
     console.log('Institution:', result.institution);
     console.log('Graduation Year:', result.graduationYear);
     console.log('Education Level:', result.educationLevel);
+    
+    console.log('\nEducation array length:', result.education ? result.education.length : 0);
+    
+    if (result.education && result.education.length > 0) {
+      console.log('\n📚 ALL EDUCATION ENTRIES:');
+      result.education.forEach((edu, i) => {
+        console.log(`\n  ${i + 1}. ${edu.degree}`);
+        console.log(`     Institution: ${edu.institution || 'Not specified'}`);
+        console.log(`     Year: ${edu.graduationYear || 'Not specified'}`);
+      });
+    } else {
+      console.log('\n⚠️ No education array found');
+    }
     
     console.log('\n💡 SKILLS:');
     if (result.skills && result.skills.length > 0) {

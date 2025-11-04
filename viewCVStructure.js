@@ -1,7 +1,7 @@
 const pdf = require('pdf-parse');
 const fs = require('fs');
 
-const cvPath = 'd:/vihin/Documents/Github/ITNEXT/Mentora-Consulting-Student-Web-API/uploads/cv/cv-690a5b98c19c22dcb0d7f87e-1762287270193-514136436.pdf';
+const cvPath = 'd:/vihin/Documents/Github/ITNEXT/Mentora-Consulting-Student-Web-API/uploads/cv/cv-690a5b98c19c22dcb0d7f87e-1762288420166-88207152.pdf';
 
 pdf(fs.readFileSync(cvPath)).then(data => {
   const lines = data.text.split('\n');

@@ -92,13 +92,19 @@ class CVExtractionService {
       city: '',
       country: '',
       
-      // Education Details
+      // Education Details (single - for backward compatibility)
       degree: '',
       institution: '',
       graduationYear: '',
       gpa: '',
       ieltsScore: '',
       englishLevel: '',
+      
+      // Education Array (multiple education entries)
+      education: [],
+      
+      // Qualifications (A-Levels, O-Levels, etc.)
+      qualifications: [],
       
       // Work Experience
       workExperience: [],
@@ -309,90 +315,242 @@ class CVExtractionService {
         }
       }
 
-      // Enhanced education information extraction using NLP
+      // Enhanced education information extraction - support multiple entries
       const educationLevels = {
         'PhD': ['phd', 'ph.d', 'doctor of philosophy', 'doctorate', 'doctoral'],
         'Masters': ['master', 'msc', 'm.sc', 'ma', 'm.a', 'mba', 'm.b.a', 'meng', 'm.eng'],
-        'Bachelors': ['bachelor', 'bsc', 'b.sc', 'ba', 'b.a', 'beng', 'b.eng', 'btech', 'b.tech'],
+        'Bachelors': ['bachelor', 'bsc', 'b.sc', 'ba', 'b.a', 'beng', 'b.eng', 'btech', 'b.tech', 'bit', 'b.it'],
         'Diploma': ['diploma', 'associate'],
         'Certificate': ['certificate', 'certification']
       };
       
-      const educationKeywords = ['education', 'degree', 'university', 'college', 'institute', 'qualification', 'academic'];
+      const qualificationKeywords = ['a-level', 'a level', 'o-level', 'o level', 'g.c.e', 'gce', 'advanced level', 'ordinary level'];
+      const educationKeywords = ['education', 'academic background', 'qualifications'];
       const textLower = text.toLowerCase();
       
-      // Detect education level
-      for (const [level, keywords] of Object.entries(educationLevels)) {
-        for (const keyword of keywords) {
-          if (textLower.includes(keyword)) {
-            structured.educationLevel = level;
+      // Find education section
+      let inEducationSection = false;
+      let educationSectionLines = [];
+      
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i].trim();
+        const lineLower = line.toLowerCase();
+        
+        // Check if we're entering education section
+        if (educationKeywords.some(keyword => lineLower === keyword)) {
+          inEducationSection = true;
+          continue;
+        }
+        
+        // Collect education section lines
+        if (inEducationSection && line.length > 0) {
+          // Stop at next major section
+          if (lineLower === 'technical skills' || lineLower === 'skills' || 
+              lineLower === 'work experience' || lineLower === 'projects' ||
+              lineLower === 'certifications' || lineLower === 'awards' ||
+              lineLower === 'soft skills' || lineLower === 'strengths') {
+            break;
+          }
+          educationSectionLines.push(line);
+        }
+      }
+      
+      // Extract ALL education entries (degrees and qualifications)
+      const educationEntries = [];
+      let currentEntry = null;
+      
+      for (let i = 0; i < educationSectionLines.length; i++) {
+        const line = educationSectionLines[i];
+        const lineLower = line.toLowerCase();
+        
+        // Check if this is a degree line (more comprehensive)
+        const isDegree = (lineLower.includes('bachelor') || lineLower.includes('master') || 
+                         lineLower.includes('phd') || lineLower.includes('diploma') || 
+                         lineLower.includes('degree') || lineLower.includes('bit') || lineLower.includes('b.it') ||
+                         lineLower.includes('bsc') || lineLower.includes('b.sc') || 
+                         lineLower.includes('msc') || lineLower.includes('m.sc') ||
+                         lineLower.includes('ba') || lineLower.includes('b.a') ||
+                         lineLower.includes('ma') || lineLower.includes('m.a') ||
+                         lineLower.includes('mba') || lineLower.includes('m.b.a') ||
+                         lineLower.includes('information technology'));
+        
+        // Check if this is an institution line
+        const isInstitution = (lineLower.includes('university') || lineLower.includes('college') || 
+                              lineLower.includes('institute') || lineLower.includes('school') &&
+                              !lineLower.includes('high school') && !lineLower.includes('vidyalaya'));
+        
+        // Check if this is a qualification (A-Level, O-Level)
+        const isQualification = qualificationKeywords.some(keyword => lineLower.includes(keyword));
+        
+        // IMPORTANT: Check isQualification FIRST because a line can match both
+        // (e.g., "G.C.E Advanced Level" matches both isDegree and isQualification)
+        if (isQualification) {
+          // Handle A-Level, O-Level as separate entry or qualification
+          if (currentEntry && currentEntry.degree) {
+            educationEntries.push(currentEntry);
+          }
+          
+          // Extract institution from the same line if present (e.g., "G.C.E Advanced Level – Panadura Balika Maha Vidyalaya")
+          let degreePart = line;
+          let institutionPart = '';
+          
+          // Split on various dash characters: hyphen (\u002D), en dash (\u2013), em dash (\u2014)
+          // Use regex to split on any dash with optional surrounding whitespace
+          const dashRegex = /\s*[\u002D\u2013\u2014]\s*/;
+          if (dashRegex.test(line)) {
+            const parts = line.split(dashRegex);
+            if (parts.length >= 2) {
+              degreePart = parts[0].trim();
+              institutionPart = parts.slice(1).join(' ').trim();
+            }
+          }
+          
+          currentEntry = {
+            degree: degreePart,
+            institution: institutionPart,
+            graduationYear: '',
+            gpa: ''
+          };
+          
+          // If institution wasn't found in the same line, check next line
+          if (!institutionPart && i + 1 < educationSectionLines.length) {
+            const nextLine = educationSectionLines[i + 1];
+            if (nextLine.toLowerCase().includes('school') || nextLine.toLowerCase().includes('college') || 
+                nextLine.toLowerCase().includes('vidyalaya')) {
+              currentEntry.institution = nextLine;
+              i++; // Skip next line
+            }
+          }
+        } else if (isDegree) {
+          // Start a new education entry
+          if (currentEntry && currentEntry.degree) {
+            educationEntries.push(currentEntry);
+          }
+          currentEntry = {
+            degree: line,
+            institution: '',
+            graduationYear: '',
+            gpa: ''
+          };
+          
+          // Extract year from degree line if present
+          if (line.match(/20\d{2}|19\d{2}/)) {
+            const dates = chrono.parse(line);
+            if (dates && dates.length > 0) {
+              const year = dates[dates.length - 1].start.get('year');
+              if (year && year >= 1990 && year <= new Date().getFullYear() + 5) {
+                currentEntry.graduationYear = year.toString();
+              }
+            }
+          }
+        } else if (isInstitution && currentEntry) {
+          // Add institution to current entry
+          currentEntry.institution = line;
+          
+          // Extract year from institution line if not already found
+          if (!currentEntry.graduationYear && line.match(/20\d{2}|19\d{2}/)) {
+            const dates = chrono.parse(line);
+            if (dates && dates.length > 0) {
+              const year = dates[dates.length - 1].start.get('year');
+              if (year && year >= 1990 && year <= new Date().getFullYear() + 5) {
+                currentEntry.graduationYear = year.toString();
+              }
+            }
+          }
+        }
+      }
+      
+      // Add the last entry
+      if (currentEntry && currentEntry.degree) {
+        educationEntries.push(currentEntry);
+      }
+      
+      // Populate structured data
+      if (educationEntries.length > 0) {
+        // Set first entry to single fields (for backward compatibility)
+        structured.degree = educationEntries[0].degree;
+        structured.institution = educationEntries[0].institution;
+        structured.graduationYear = educationEntries[0].graduationYear;
+        
+        // Set all entries to education array
+        structured.education = educationEntries;
+        
+        // Detect education level from first degree
+        const degreeLower = educationEntries[0].degree.toLowerCase();
+        // Check in order of specificity: PhD > Masters > Bachelors > Diploma > Certificate
+        // Use word boundaries to avoid false matches (e.g., "bachelor" should not match "master")
+        for (const [level, keywords] of Object.entries(educationLevels)) {
+          let matched = false;
+          for (const keyword of keywords) {
+            // Use word boundary regex to ensure exact word match
+            const regex = new RegExp(`\\b${keyword}\\b`, 'i');
+            if (regex.test(degreeLower)) {
+              structured.educationLevel = level;
+              matched = true;
+              break;
+            }
+          }
+          if (matched) break;
+        }
+      }
+      
+      // Fallback: search entire text if education section wasn't found
+      if (educationEntries.length === 0) {
+        for (const [level, keywords] of Object.entries(educationLevels)) {
+          for (const keyword of keywords) {
+            if (textLower.includes(keyword)) {
+              if (!structured.educationLevel) {
+                structured.educationLevel = level;
+              }
+              // Find the line containing the keyword
+              for (const line of lines) {
+                if (line.toLowerCase().includes(keyword) && !structured.degree) {
+                  structured.degree = line.trim();
+                  break;
+                }
+              }
+            }
+          }
+        }
+        
+        // Find institution
+        for (const line of lines) {
+          const lineLower = line.toLowerCase();
+          if ((lineLower.includes('university') || lineLower.includes('college') || lineLower.includes('institute')) 
+              && !structured.institution && line.length < 100) {
+            structured.institution = line.trim();
             break;
           }
         }
-        if (structured.educationLevel) break;
       }
       
-      // Extract degree and institution
-      for (let i = 0; i < lines.length; i++) {
-        const line = lines[i].toLowerCase();
-        if (educationKeywords.some(keyword => line.includes(keyword))) {
-          // Look for degree and institution in nearby lines
-          for (let j = i; j < Math.min(i + 5, lines.length); j++) {
-            const eduLine = lines[j];
-            if (eduLine.length > 5 && !eduLine.includes(':')) {
-              // Check for degree
-              if (!structured.degree && (
-                eduLine.match(/bachelor|master|phd|doctorate|diploma|degree/i))) {
-                structured.degree = eduLine.trim();
-              }
-              // Check for institution
-              if (!structured.institution && (
-                eduLine.match(/university|college|institute|school/i))) {
-                structured.institution = eduLine.trim();
-              }
-            }
-          }
-          if (structured.degree && structured.institution) break;
-        }
-      }
-
-      // Enhanced graduation year extraction using chrono-node
-      const educationKeywordsForDate = ['graduated', 'degree', 'bachelor', 'master', 'phd', 'diploma', 'certificate', 'completed'];
-      let graduationYearFound = false;
-      
-      // Use chrono to find dates near education keywords
-      for (const keyword of educationKeywordsForDate) {
-        const keywordIndex = text.toLowerCase().indexOf(keyword);
-        if (keywordIndex !== -1) {
-          const contextText = text.substring(Math.max(0, keywordIndex - 50), Math.min(text.length, keywordIndex + 100));
-          const dates = chrono.parse(contextText);
-          
-          if (dates && dates.length > 0) {
-            // Get the most recent date that makes sense for graduation
-            for (const dateResult of dates) {
-              const year = dateResult.start.get('year');
-              if (year && year >= 1990 && year <= new Date().getFullYear() + 5) {
-                structured.graduationYear = year.toString();
-                graduationYearFound = true;
-                break;
-              }
-            }
-            if (graduationYearFound) break;
-          }
-        }
-      }
-      
-      // Fallback: Basic year extraction if chrono didn't find it
+      // Fallback graduation year extraction if not found
       if (!structured.graduationYear) {
         const yearRegex = /(19|20)\d{2}/g;
         const yearMatches = text.match(yearRegex);
         if (yearMatches && yearMatches.length > 0) {
           const years = yearMatches.map(y => parseInt(y))
-            .filter(y => y >= 1990 && y <= new Date().getFullYear())
+            .filter(y => y >= 1990 && y <= new Date().getFullYear() + 5)
             .sort((a, b) => b - a);
           
           if (years.length > 0) {
-            structured.graduationYear = years[0].toString();
+            // Try to find a year near education keywords
+            for (const keyword of ['education', 'degree', 'graduated', 'university', 'college']) {
+              const keywordIndex = textLower.indexOf(keyword);
+              if (keywordIndex !== -1) {
+                const contextText = text.substring(Math.max(0, keywordIndex - 100), Math.min(text.length, keywordIndex + 200));
+                const contextYears = contextText.match(yearRegex);
+                if (contextYears && contextYears.length > 0) {
+                  structured.graduationYear = contextYears[contextYears.length - 1]; // Last year is usually graduation
+                  break;
+                }
+              }
+            }
+            
+            // If still not found, use most recent year
+            if (!structured.graduationYear) {
+              structured.graduationYear = years[0].toString();
+            }
           }
         }
       }
@@ -435,7 +593,7 @@ class CVExtractionService {
       }
 
       // Enhanced work experience and projects extraction
-      const workKeywords = ['experience', 'employment', 'work history', 'projects', 'project'];
+      const workKeywords = ['experience', 'experiences', 'employment', 'work history', 'projects', 'project'];
       let inWorkSection = false;
       let inProjectSection = false;
       const workExperiences = [];
@@ -445,7 +603,7 @@ class CVExtractionService {
         const lineLower = line.toLowerCase();
         
         // Check if we're entering work/project section
-        if (lineLower === 'work experience' || lineLower.includes('employment')) {
+        if (lineLower === 'work experience' || lineLower === 'work experiences' || lineLower.includes('employment')) {
           inWorkSection = true;
           inProjectSection = false;
           continue;
@@ -509,7 +667,66 @@ class CVExtractionService {
           return result;
         };
 
-        // Pattern: "Position/Project Name    Date1 – Date2"
+        // Pattern 1: Multi-line format (Company on one line, position with "Worked as" next, date in parentheses after)
+        // Example:
+        // "Sri Shell Tech PVT LTD - Dematagoda"
+        // "Worked as loan Recovery and Management System"
+        // "(April 2022 - May 2023)"
+        if (inWorkSection && line.length > 10 && i + 2 < lines.length) {
+          const nextLine1 = lines[i + 1]?.trim() || '';
+          const nextLine2 = lines[i + 2]?.trim() || '';
+          
+          // Check if this looks like a company name (contains location indicators or company suffixes)
+          const isCompanyLine = (line.includes('LTD') || line.includes('Ltd') || line.includes('LLC') || 
+                                 line.includes('Inc') || line.includes('PLC') || line.includes('PVT') ||
+                                 (line.includes('-') && !line.includes('(') && line.length < 80));
+          const hasWorkedAs = nextLine1.toLowerCase().includes('worked as');
+          const hasDateInParens = nextLine2.match(/\(.*20\d{2}.*\)/);
+          
+          if (isCompanyLine && hasWorkedAs && hasDateInParens) {
+            const company = line;
+            const position = nextLine1.replace(/worked as\s*/i, '').trim();
+            const dates = parseDates(nextLine2);
+            
+            if (position && dates.startDate) {
+              workExperiences.push({
+                company: company,
+                position: position,
+                startDate: dates.startDate,
+                endDate: dates.endDate || new Date().toISOString().split('T')[0],
+                description: ''
+              });
+              i += 2; // Skip the next 2 lines we just processed
+              continue;
+            }
+          }
+          
+          // Alternative format: Position with "Worked as" contains date
+          // "Worked as intern Software Engineer (July 2024 - January 2025)"
+          if (hasWorkedAs && nextLine1.match(/\(.*20\d{2}.*\)/)) {
+            const company = line;
+            // Extract position and date from the "Worked as..." line
+            const positionMatch = nextLine1.match(/worked as\s+(.+?)\s*\(/i);
+            if (positionMatch) {
+              const position = positionMatch[1].trim();
+              const dates = parseDates(nextLine1);
+              
+              if (position && dates.startDate) {
+                workExperiences.push({
+                  company: company,
+                  position: position,
+                  startDate: dates.startDate,
+                  endDate: dates.endDate || new Date().toISOString().split('T')[0],
+                  description: ''
+                });
+                i += 1; // Skip the next line we just processed
+                continue;
+              }
+            }
+          }
+        }
+
+        // Pattern 2: "Position/Project Name    Date1 – Date2" on same line
         // This handles both work experience and projects with dates on the same line
         if ((inWorkSection || inProjectSection) && line.length > 10) {
           // Check if line contains a date range (e.g., "Oct 2023 – April 2024" or "Nov 2023 – Nov 2024")
@@ -551,7 +768,8 @@ class CVExtractionService {
           lineLower.includes('technical skills') || 
           lineLower.includes('strengths') ||
           lineLower === 'skills' ||
-          lineLower === 'education'
+          lineLower === 'education' ||
+          lineLower === 'personal profile'
         )) {
           inWorkSection = false;
           inProjectSection = false;
@@ -560,28 +778,29 @@ class CVExtractionService {
 
       structured.workExperience = workExperiences;
 
-      // Enhanced skills extraction using NLP and TF-IDF
-      const skillsKeywords = ['technical skills', 'skills', 'technologies', 'programming', 'languages', 'tools', 'expertise', 'competencies', 'proficient'];
+      // Enhanced skills extraction - ONLY from skills section
+      const skillsKeywords = ['technical skills', 'skills', 'technologies used', 'technologies'];
       let inSkillsSection = false;
       const skills = [];
+      let skillsSectionText = '';
       
       // Comprehensive tech skills database
       const techSkillsDatabase = [
         // Programming Languages
         'JavaScript', 'TypeScript', 'Python', 'Java', 'C#', 'C++', 'C', 'PHP', 'Ruby', 'Go', 'Swift', 'Kotlin', 'Rust', 'Scala', 'R', 'MATLAB',
         // Frontend
-        'React', 'Angular', 'Vue.js', 'Vue', 'Svelte', 'Next.js', 'Nuxt.js', 'Gatsby', 'Remix',
-        'HTML', 'HTML5', 'CSS', 'CSS3', 'SASS', 'SCSS', 'LESS', 'Bootstrap', 'Tailwind CSS', 'Material-UI', 'Ant Design', 'Chakra UI',
+        'React', 'React.js', 'ReactJS', 'Angular', 'Vue.js', 'Vue', 'Svelte', 'Next.js', 'Nuxt.js', 'Gatsby', 'Remix',
+        'HTML', 'HTML5', 'CSS', 'CSS3', 'SASS', 'SCSS', 'LESS', 'Bootstrap', 'Tailwind', 'Tailwind CSS', 'Material-UI', 'MUI', 'Ant Design', 'Chakra UI',
         'jQuery', 'Redux', 'MobX', 'Zustand', 'Webpack', 'Vite', 'Rollup', 'Parcel',
         // Backend
-        'Node.js', 'Express', 'Express.js', 'Nest.js', 'Fastify', 'Koa',
+        'Node.js', 'Node', 'NodeJS', 'Express', 'Express.js', 'Nest.js', 'Fastify', 'Koa',
         'Django', 'Flask', 'FastAPI', 'Laravel', 'Symfony', 'CodeIgniter',
-        'Spring', 'Spring Boot', 'Hibernate', 'ASP.NET', '.NET Core', '.NET',
-        'Ruby on Rails', 'Rails',
+        'Spring', 'Spring Boot', 'Hibernate', 'ASP.NET', 'ASP.NET Core', '.NET Core', '.NET',
+        'Ruby on Rails', 'Rails', 'PHP Laravel',
         // Mobile
         'React Native', 'Flutter', 'Ionic', 'Xamarin', 'Android', 'iOS', 'SwiftUI',
         // Databases
-        'MySQL', 'PostgreSQL', 'MongoDB', 'Redis', 'SQLite', 'Oracle', 'SQL Server', 'MariaDB',
+        'MySQL', 'PostgreSQL', 'MongoDB', 'Redis', 'SQLite', 'Oracle', 'SQL Server', 'Microsoft SQL Server', 'MariaDB',
         'Cassandra', 'DynamoDB', 'Firebase', 'Firestore', 'Supabase', 'PlanetScale',
         'Elasticsearch', 'Neo4j', 'CouchDB',
         // Cloud & DevOps
@@ -591,7 +810,7 @@ class CVExtractionService {
         // Version Control
         'Git', 'GitHub', 'GitLab', 'Bitbucket', 'SVN',
         // APIs & Architecture
-        'REST API', 'RESTful', 'GraphQL', 'gRPC', 'WebSocket', 'Socket.io',
+        'REST', 'REST API', 'RESTful', 'RESTful API', 'GraphQL', 'gRPC', 'WebSocket', 'Socket.io',
         'Microservices', 'Monolithic', 'Serverless', 'SOA', 'Event-Driven',
         // Testing
         'Jest', 'Mocha', 'Chai', 'Jasmine', 'Cypress', 'Selenium', 'Puppeteer', 'Playwright',
@@ -600,95 +819,77 @@ class CVExtractionService {
         'Agile', 'Scrum', 'Kanban', 'DevOps', 'CI/CD', 'TDD', 'BDD',
         // Data Science & ML
         'TensorFlow', 'PyTorch', 'Keras', 'Scikit-learn', 'Pandas', 'NumPy', 'Jupyter',
-        'Machine Learning', 'Deep Learning', 'NLP', 'Computer Vision',
+        'Machine Learning', 'Deep Learning', 'NLP', 'Computer Vision', 'AI',
         // Other
         'Linux', 'Unix', 'Windows', 'macOS',
         'Apache', 'Nginx', 'Tomcat',
         'JIRA', 'Confluence', 'Slack', 'Trello',
-        'Figma', 'Adobe XD', 'Sketch', 'Photoshop', 'Illustrator'
+        'Figma', 'Adobe XD', 'Sketch', 'Photoshop', 'Illustrator',
+        'Blockchain', 'FaceAPI', 'JWT', 'Hashing', 'Web Development', 'Database'
       ];
-
-      // Use compromise to identify technical terms and concepts
-      const doc = compromise(text);
-      const nouns = doc.nouns().out('array');
       
-      // Extract skills from skills section
+      // Extract ONLY the skills section text
       for (let i = 0; i < lines.length; i++) {
-        const line = lines[i].toLowerCase();
+        const line = lines[i].trim();
+        const lineLower = line.toLowerCase();
         
-        if (skillsKeywords.some(keyword => line.includes(keyword))) {
+        // Check if we're entering skills section
+        if (skillsKeywords.some(keyword => lineLower === keyword || lineLower.includes(keyword))) {
           inSkillsSection = true;
           continue;
         }
 
-        if (inSkillsSection && line.length > 2 && line.length < 200) {
-          // Skip section headers
-          if (line.includes('client side') || line.includes('server side') || line.includes('other development') ||
-              line.includes('soft skills') || line.includes('personal skills')) {
+        // Collect skills section text
+        if (inSkillsSection && line.length > 0) {
+          // Stop at next major section
+          if (lineLower === 'strengths' || lineLower === 'education' || 
+              lineLower === 'awards' || lineLower === 'certifications' || 
+              lineLower === 'work experience' || lineLower === 'projects') {
+            break;
+          }
+          
+          // Skip subsection headers
+          if (lineLower.includes('client side') || lineLower.includes('server side') || 
+              lineLower.includes('other development') || lineLower.includes('databases & tools')) {
             continue;
           }
           
-          // Split by common separators
-          const skillItems = line.split(/[,;|•\-\n\t]/).map(s => s.trim()).filter(s => s.length > 0);
-          
-          // Match against tech skills database
-          for (const item of skillItems) {
-            const itemClean = item.replace(/[()[\]{}]/g, '').trim();
-            if (itemClean.length < 2) continue;
-            
-            const foundSkill = techSkillsDatabase.find(skill => 
-              skill.toLowerCase() === itemClean.toLowerCase() ||
-              itemClean.toLowerCase().includes(skill.toLowerCase()) ||
-              skill.toLowerCase().includes(itemClean.toLowerCase())
-            );
-            
-            if (foundSkill && !skills.includes(foundSkill)) {
-              skills.push(foundSkill);
-            } else if (itemClean.length > 2 && itemClean.length < 30 && !skills.includes(itemClean)) {
-              // Add as-is if it looks like a skill
-              const capitalizedSkill = itemClean.split(' ').map(word => 
-                word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()
-              ).join(' ');
-              skills.push(capitalizedSkill);
-            }
-          }
-        }
-
-        // Stop at next major section
-        if (inSkillsSection && (line.includes('strengths') || line.includes('education') || 
-            line.includes('awards') || line.includes('certifications') || line.includes('projects'))) {
-          break;
+          skillsSectionText += ' ' + line;
         }
       }
 
-      // Also search for skills throughout the entire document using TF-IDF
-      const TfIdf = natural.TfIdf;
-      const tfidf = new TfIdf();
-      tfidf.addDocument(text);
-      
-      techSkillsDatabase.forEach(skill => {
-        const score = tfidf.tfidf(skill, 0);
-        if (score > 0.1 && !skills.includes(skill)) {
-          // Verify the skill actually appears in the text
-          if (text.toLowerCase().includes(skill.toLowerCase())) {
+      // Extract skills from the skills section text only
+      if (skillsSectionText.length > 0) {
+        // Remove bullet points and clean up
+        const cleanedText = skillsSectionText.replace(/[•\-]/g, ' ').replace(/\s+/g, ' ');
+        
+        // Match against tech skills database
+        for (const skill of techSkillsDatabase) {
+          const skillRegex = new RegExp(`\\b${skill.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
+          if (skillRegex.test(cleanedText) && !skills.includes(skill)) {
             skills.push(skill);
           }
         }
-      });
+        
+        // Also split by common separators and check each token
+        const tokens = cleanedText.split(/[,;|•\n\t]/).map(s => s.trim()).filter(s => s.length > 1);
+        for (const token of tokens) {
+          const tokenClean = token.replace(/[()[\]{}]/g, '').trim();
+          if (tokenClean.length < 2 || tokenClean.length > 30) continue;
+          
+          // Check if it matches any skill in database (case insensitive)
+          const matchedSkill = techSkillsDatabase.find(skill => 
+            skill.toLowerCase() === tokenClean.toLowerCase()
+          );
+          
+          if (matchedSkill && !skills.includes(matchedSkill)) {
+            skills.push(matchedSkill);
+          }
+        }
+      }
 
-      // Clean up skills and remove duplicates
-      const cleanedSkills = skills
-        .filter(skill => typeof skill === 'string' && skill.length > 1 && skill.length < 50)
-        .map(skill => skill.replace(/[|•]/g, '').trim())
-        .filter(skill => skill.length > 0)
-        .map(skill => {
-          // Capitalize first letter of each word for consistency
-          return skill.split(' ').map(word => 
-            word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()
-          ).join(' ');
-        });
-      
-      structured.skills = [...new Set(cleanedSkills)]; // Remove duplicates
+      // Remove duplicates and clean up
+      structured.skills = [...new Set(skills)];
 
       // Enhanced social links extraction using url-regex-safe
       try {
@@ -742,16 +943,15 @@ class CVExtractionService {
           structured[key] = '';
         }
         if (Array.isArray(structured[key])) {
-          // Only filter string arrays, not object arrays like workExperience
-          if (key === 'skills' || key === 'workExperience') {
-            // For workExperience, keep all valid objects
-            if (key === 'workExperience') {
-              structured[key] = structured[key].filter(item => item && typeof item === 'object');
-            } else {
-              // For skills, filter string items
-              structured[key] = structured[key].filter(item => item && typeof item === 'string' && item.trim() !== '');
-            }
+          // Only filter string arrays, not object arrays like workExperience, education, qualifications
+          if (key === 'workExperience' || key === 'education' || key === 'qualifications') {
+            // For object arrays, keep all valid objects
+            structured[key] = structured[key].filter(item => item && typeof item === 'object');
+          } else if (key === 'skills') {
+            // For skills, filter string items
+            structured[key] = structured[key].filter(item => item && typeof item === 'string' && item.trim() !== '');
           } else {
+            // For other arrays, filter string items
             structured[key] = structured[key].filter(item => item && typeof item === 'string' && item.trim() !== '');
           }
         }
