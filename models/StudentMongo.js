@@ -66,8 +66,7 @@ const studentSchema = new mongoose.Schema({
   },
   country: {
     type: String,
-    trim: true,
-    default: 'United Kingdom'
+    trim: true
   },
   
   // Education Information
