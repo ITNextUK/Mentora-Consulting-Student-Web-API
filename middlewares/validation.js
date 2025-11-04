@@ -92,39 +92,39 @@ const validateProfileUpdate = [
     .isLength({ min: 2, max: 50 }).withMessage('Last name must be between 2-50 characters'),
   
   body('phone')
-    .optional()
+    .optional({ checkFalsy: true })
     .isMobilePhone().withMessage('Invalid phone number'),
   
   body('dateOfBirth')
-    .optional()
+    .optional({ checkFalsy: true })
     .isISO8601().withMessage('Invalid date format'),
   
   body('gender')
-    .optional()
+    .optional({ checkFalsy: true })
     .isIn(['Male', 'Female', 'Other', 'Prefer not to say']).withMessage('Invalid gender value'),
   
   body('gpa')
-    .optional()
+    .optional({ checkFalsy: true })
     .isFloat({ min: 0, max: 4.0 }).withMessage('GPA must be between 0 and 4.0'),
   
   body('ieltsScore')
-    .optional()
+    .optional({ checkFalsy: true })
     .isFloat({ min: 0, max: 9.0 }).withMessage('IELTS score must be between 0 and 9.0'),
   
   body('englishLevel')
-    .optional()
+    .optional({ checkFalsy: true })
     .isIn(['Native', 'Fluent', 'Advanced', 'Intermediate', 'Basic']).withMessage('Invalid English level'),
   
   body('github')
-    .optional()
+    .optional({ checkFalsy: true })
     .isURL().withMessage('Invalid GitHub URL'),
   
   body('linkedin')
-    .optional()
+    .optional({ checkFalsy: true })
     .isURL().withMessage('Invalid LinkedIn URL'),
   
   body('portfolio')
-    .optional()
+    .optional({ checkFalsy: true })
     .isURL().withMessage('Invalid Portfolio URL'),
   
   body('workExperience')

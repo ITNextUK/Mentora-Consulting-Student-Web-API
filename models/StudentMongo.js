@@ -90,6 +90,11 @@ const studentSchema = new mongoose.Schema({
     type: String,
     trim: true
   },
+  englishLevel: {
+    type: String,
+    enum: ['Native', 'Fluent', 'Advanced', 'Intermediate', 'Basic', ''],
+    trim: true
+  },
   
   // Education Array (for multiple degrees)
   education: [{
@@ -98,6 +103,56 @@ const studentSchema = new mongoose.Schema({
     graduationYear: String,
     gpa: String,
     fieldOfStudy: String
+  }],
+  
+  // Academic Qualifications (Structured with subjects)
+  qualifications: [{
+    qualificationType: {
+      type: String,
+      enum: ['A-Level', 'BTEC', 'T-Level', 'IB', 'US-GPA', 'Indian-HSC', 'O-Level', 'AS-Level', 'Other']
+    },
+    country: String,
+    institutionName: String,
+    yearCompleted: String,
+    subjects: [{
+      subject: String,
+      grade: String
+    }]
+  }],
+  
+  // English Proficiency (Structured test scores)
+  englishProficiency: {
+    isFirstLanguage: {
+      type: Boolean,
+      default: false
+    },
+    testType: {
+      type: String,
+      enum: ['IELTS', 'TOEFL', 'PTE', 'Duolingo', 'Cambridge', 'Other', '']
+    },
+    testDate: String,
+    scores: {
+      overall: String,
+      listening: String,
+      reading: String,
+      writing: String,
+      speaking: String
+    }
+  },
+  
+  // Projects Portfolio
+  projects: [{
+    title: String,
+    description: String,
+    technologies: [String],
+    duration: String,
+    role: String,
+    complexity: {
+      type: String,
+      enum: ['Low', 'Medium', 'High', '']
+    },
+    url: String,
+    achievements: String
   }],
   
   // Work Experience
@@ -116,10 +171,11 @@ const studentSchema = new mongoose.Schema({
     trim: true
   }],
   
-  // Courses of Interest
+  // Courses of Interest (structured with details)
   coursesOfInterest: [{
-    type: String,
-    trim: true
+    courseName: String,
+    level: String,
+    university: String
   }],
   
   // Location Interests (UK cities)

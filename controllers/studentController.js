@@ -57,12 +57,21 @@ const updateProfile = async (req, res) => {
     if (updateData.graduationYear) student.graduationYear = updateData.graduationYear;
     if (updateData.gpa) student.gpa = updateData.gpa;
     if (updateData.ieltsScore) student.ieltsScore = updateData.ieltsScore;
+    if (updateData.englishLevel) student.englishLevel = updateData.englishLevel;
+    
+    // Handle both githubUrl and github (frontend sends 'github')
     if (updateData.githubUrl) student.githubUrl = updateData.githubUrl;
+    if (updateData.github) student.githubUrl = updateData.github;
     if (updateData.linkedinUrl) student.linkedinUrl = updateData.linkedinUrl;
+    if (updateData.linkedin) student.linkedinUrl = updateData.linkedin;
     if (updateData.portfolioUrl) student.portfolioUrl = updateData.portfolioUrl;
+    if (updateData.portfolio) student.portfolioUrl = updateData.portfolio;
     
     // Update arrays
     if (updateData.education) student.education = updateData.education;
+    if (updateData.qualifications) student.qualifications = updateData.qualifications;
+    if (updateData.englishProficiency !== undefined) student.englishProficiency = updateData.englishProficiency;
+    if (updateData.projects) student.projects = updateData.projects;
     if (updateData.workExperience) student.workExperience = updateData.workExperience;
     if (updateData.skills) student.skills = updateData.skills;
     if (updateData.coursesOfInterest) student.coursesOfInterest = updateData.coursesOfInterest;
