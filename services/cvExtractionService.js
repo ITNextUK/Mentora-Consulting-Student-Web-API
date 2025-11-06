@@ -331,8 +331,12 @@ class CVExtractionService {
               
               // Country is typically the last part or inferred
               const lastPart = parts[parts.length - 1];
-              if (lastPart.length > 15) {
-                // Last part has postal code, extract country from context or leave empty
+              // Check if last part looks like a postcode (UK format: letters and numbers)
+              const isPostcode = /^[A-Z]{1,2}\d{1,2}\s?\d[A-Z]{2}\.?$/i.test(lastPart.trim());
+              
+              if (isPostcode || lastPart.length > 15) {
+                // Last part is postal code, try to infer country from phone or institution
+                // For now, leave empty (better than wrong data)
                 structured.country = '';
               } else {
                 structured.country = lastPart;
@@ -531,24 +535,23 @@ class CVExtractionService {
                                         line.length > 100 ||  // Very long lines are usually descriptions, not degrees
                                         (!isDegree && line.split(/\s+/).length === 2 && /^[A-Z][a-z]+\s[A-Z][a-z]+$/.test(line.trim()));  // Just a name (e.g., "Chamilka Ambagahawatta")
         
-        const isInstitutionOnly = (lineLower.includes('university') || lineLower.includes('college') || 
-                                  lineLower.includes('institute') || lineLower.includes('school')) &&
-                                 !isDegree; // Institution name without degree
+        // Check if this is an institution line (but don't filter it out yet - we need it for association)
+        const isInstitution = (lineLower.includes('university') || lineLower.includes('college') || 
+                              lineLower.includes('institute') || lineLower.includes('school') ||
+                              lineLower.includes('studies') || lineLower.includes('academy')) &&
+                              !lineLower.includes('high school') && !lineLower.includes('vidyalaya') &&
+                              !isDegree; // Institution name without degree
         
         // Skip bullet points that aren't degrees
         if (isBulletPoint && !isDegree) {
           continue;
         }
         
+        // Skip various non-education content, but NOT institutions (we need them for association)
         if (isJobTitle || isCompanyLine || isJobResponsibility || isProjectLine || 
-            isDeclarationOrReference || isInstitutionOnly) {
+            isDeclarationOrReference) {
           continue; // Skip this line
         }
-        
-        // Check if this is an institution line
-        const isInstitution = (lineLower.includes('university') || lineLower.includes('college') || 
-                              lineLower.includes('institute') || lineLower.includes('school') &&
-                              !lineLower.includes('high school') && !lineLower.includes('vidyalaya'));
         
         // Check if this is a qualification (A-Level, O-Level)
         const isQualification = qualificationKeywords.some(keyword => lineLower.includes(keyword));
@@ -614,11 +617,14 @@ class CVExtractionService {
             gpa: ''
           };
           
-          // Extract year from degree line if present
+          // Extract year from degree line if present (prefer end year for graduation)
           if (line.match(/20\d{2}|19\d{2}/)) {
             const dates = chrono.parse(line);
             if (dates && dates.length > 0) {
-              const year = dates[dates.length - 1].start.get('year');
+              const lastDate = dates[dates.length - 1];
+              // If there's an end date (date range), use that as graduation year
+              // Otherwise use the start date
+              let year = lastDate.end ? lastDate.end.get('year') : lastDate.start.get('year');
               if (year && year >= 1990 && year <= new Date().getFullYear() + 5) {
                 currentEntry.graduationYear = year.toString();
               }
@@ -628,11 +634,13 @@ class CVExtractionService {
           // Add institution to current entry
           currentEntry.institution = line;
           
-          // Extract year from institution line if not already found
+          // Extract year from institution line if not already found (prefer end year)
           if (!currentEntry.graduationYear && line.match(/20\d{2}|19\d{2}/)) {
             const dates = chrono.parse(line);
             if (dates && dates.length > 0) {
-              const year = dates[dates.length - 1].start.get('year');
+              const lastDate = dates[dates.length - 1];
+              // If there's an end date (date range), use that as graduation year
+              let year = lastDate.end ? lastDate.end.get('year') : lastDate.start.get('year');
               if (year && year >= 1990 && year <= new Date().getFullYear() + 5) {
                 currentEntry.graduationYear = year.toString();
               }
@@ -655,6 +663,36 @@ class CVExtractionService {
         
         // Set all entries to education array
         structured.education = educationEntries;
+        
+        // Infer country from institution names if country is not set or looks like a postcode
+        if (!structured.country || /^[A-Z]{1,2}\d{1,2}\s?\d[A-Z]{2}\.?$/i.test(structured.country)) {
+          // Look through all institutions for country names
+          for (const entry of educationEntries) {
+            if (entry.institution) {
+              const instLower = entry.institution.toLowerCase();
+              // Check for common country patterns in institution names
+              if (instLower.includes('united kingdom') || instLower.includes('uk')) {
+                structured.country = 'United Kingdom';
+                break;
+              } else if (instLower.includes('sri lanka')) {
+                structured.country = 'Sri Lanka';
+                break;
+              } else if (instLower.includes('usa') || instLower.includes('united states')) {
+                structured.country = 'United States';
+                break;
+              } else if (instLower.includes('australia')) {
+                structured.country = 'Australia';
+                break;
+              } else if (instLower.includes('canada')) {
+                structured.country = 'Canada';
+                break;
+              } else if (instLower.includes('india')) {
+                structured.country = 'India';
+                break;
+              }
+            }
+          }
+        }
         
         // Detect education level from first degree
         const degreeLower = educationEntries[0].degree.toLowerCase();
