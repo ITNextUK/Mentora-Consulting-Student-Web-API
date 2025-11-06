@@ -109,6 +109,9 @@ class CVExtractionService {
       // Work Experience
       workExperience: [],
       
+      // Projects
+      projects: [],
+      
       // Skills
       skills: [],
       
@@ -1088,8 +1091,112 @@ class CVExtractionService {
 
       structured.workExperience = workExperiences;
 
+      // Enhanced projects extraction from ACCOMPLISHMENTS section
+      const projectKeywords = ['accomplishments', 'projects', 'project', 'key projects'];
+      let inProjectsSection = false;
+      const projects = [];
+
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i].trim();
+        const lineLower = line.toLowerCase();
+        
+        // Check if we're entering projects/accomplishments section
+        if (projectKeywords.some(keyword => lineLower === keyword)) {
+          inProjectsSection = true;
+          continue;
+        }
+
+        // Skip false positives
+        if (lineLower.includes('date of birth') || lineLower.includes('personal details')) {
+          continue;
+        }
+
+        // Pattern: "Project title/description - Year1- Year2" or "Appointed as... – Year1- Year2"
+        if (inProjectsSection && line.length > 10) {
+          // Check if line contains a date range (e.g., "2019- 2022" or "2018- 2019")
+          const yearRangePattern = /(\d{4})\s*[-–—]\s*(\d{4})/;
+          const match = line.match(yearRangePattern);
+          
+          if (match) {
+            const startYear = match[1];
+            const endYear = match[2];
+            
+            // Extract project title (everything before the date)
+            const title = line.replace(yearRangePattern, '').replace(/[–\-—]\s*$/, '').trim();
+            
+            // Skip if title is too short or looks like education
+            const educationKeywords = ['msc', 'bachelor', 'master', 'diploma', 'degree', 'phd', 'doctorate', 'bsc'];
+            const isEducation = educationKeywords.some(keyword => {
+              const regex = new RegExp(`\\b${keyword}\\b`, 'i');
+              return regex.test(title);
+            });
+            
+            if (isEducation || title.length < 10) {
+              continue;
+            }
+            
+            // Collect description from following lines (Scope, Deliverables, etc.)
+            let description = '';
+            const descriptionLines = [];
+            
+            for (let j = i + 1; j < lines.length && j < i + 30; j++) {
+              const descLine = lines[j].trim();
+              const descLineLower = descLine.toLowerCase();
+              
+              // Stop if we hit another project (line with year range)
+              if (yearRangePattern.test(descLine)) {
+                break;
+              }
+              
+              // Stop if we hit a major section
+              if (descLineLower === 'references' || descLineLower === 'education' || 
+                  descLineLower === 'skills' || descLineLower === 'work experience') {
+                break;
+              }
+              
+              // Collect meaningful lines (skip section headers like "Scope of the work", "Deliverables")
+              if (descLine.length > 0 && 
+                  !descLineLower.includes('scope of') && 
+                  !descLineLower.includes('deliverable') && 
+                  !descLineLower.includes('project name') &&
+                  !descLineLower.includes('client -')) {
+                // Add bullet points and regular description text
+                if (descLine.startsWith('•') || descLine.startsWith('➢') || descLine.startsWith('o') || descLine.startsWith('-')) {
+                  descriptionLines.push(descLine.replace(/^[•➢o\-]\s*/, ''));
+                } else if (descLine.length > 20) {
+                  descriptionLines.push(descLine);
+                }
+              }
+            }
+            
+            description = descriptionLines.slice(0, 10).join(' ').substring(0, 500); // Limit description length
+            
+            if (title) {
+              projects.push({
+                title: title,
+                description: description,
+                startDate: `${startYear}-01-01`,
+                endDate: `${endYear}-12-31`,
+                technologies: []
+              });
+            }
+          }
+        }
+
+        // Stop at references or other major sections
+        if (inProjectsSection && (
+          lineLower === 'references' ||
+          lineLower === 'hobbies' ||
+          lineLower.includes('hereby declare')
+        )) {
+          inProjectsSection = false;
+        }
+      }
+
+      structured.projects = projects;
+
       // Enhanced skills extraction - ONLY from skills section
-      const skillsKeywords = ['technical skills', 'skills', 'technologies used', 'technologies'];
+      const skillsKeywords = ['technical skills', 'skills', 'key skills', 'technologies used', 'technologies'];
       let inSkillsSection = false;
       const skills = [];
       let skillsSectionText = '';
@@ -1152,9 +1259,9 @@ class CVExtractionService {
         // Collect skills section text
         if (inSkillsSection && line.length > 0) {
           // Stop at next major section
-          if (lineLower === 'strengths' || lineLower === 'education' || 
+          if (lineLower === 'strengths' || lineLower === 'attributes' || lineLower === 'education' || 
               lineLower === 'awards' || lineLower === 'certifications' || 
-              lineLower === 'work experience' || lineLower === 'projects') {
+              lineLower === 'work experience' || lineLower === 'projects' || lineLower === 'experience') {
             break;
           }
           
@@ -1171,7 +1278,7 @@ class CVExtractionService {
       // Extract skills from the skills section text only
       if (skillsSectionText.length > 0) {
         // Remove bullet points and clean up
-        const cleanedText = skillsSectionText.replace(/[•\-]/g, ' ').replace(/\s+/g, ' ');
+        const cleanedText = skillsSectionText.replace(/[•➢\-]/g, '|').replace(/\s+/g, ' ');
         
         // Match against tech skills database
         for (const skill of techSkillsDatabase) {
@@ -1182,10 +1289,10 @@ class CVExtractionService {
         }
         
         // Also split by common separators and check each token
-        const tokens = cleanedText.split(/[,;|•\n\t]/).map(s => s.trim()).filter(s => s.length > 1);
+        const tokens = cleanedText.split(/[,;|•\n\t]/).map(s => s.trim()).filter(s => s.length > 2);
         for (const token of tokens) {
           const tokenClean = token.replace(/[()[\]{}]/g, '').trim();
-          if (tokenClean.length < 2 || tokenClean.length > 30) continue;
+          if (tokenClean.length < 3 || tokenClean.length > 50) continue;
           
           // Check if it matches any skill in database (case insensitive)
           const matchedSkill = techSkillsDatabase.find(skill => 
@@ -1194,6 +1301,17 @@ class CVExtractionService {
           
           if (matchedSkill && !skills.includes(matchedSkill)) {
             skills.push(matchedSkill);
+          } else if (!matchedSkill && tokenClean.length >= 3 && tokenClean.length <= 50) {
+            // Add non-database skills if they look like valid skill names
+            // Must start with capital letter or contain common skill words
+            const skillWords = ['management', 'design', 'planning', 'development', 'administration', 
+                               'engineering', 'analysis', 'testing', 'implementation'];
+            const hasSkillWord = skillWords.some(word => tokenClean.toLowerCase().includes(word));
+            const startsWithCapital = /^[A-Z]/.test(tokenClean);
+            
+            if ((hasSkillWord || startsWithCapital) && !skills.includes(tokenClean)) {
+              skills.push(tokenClean);
+            }
           }
         }
       }
@@ -1253,8 +1371,8 @@ class CVExtractionService {
           structured[key] = '';
         }
         if (Array.isArray(structured[key])) {
-          // Only filter string arrays, not object arrays like workExperience, education, qualifications
-          if (key === 'workExperience' || key === 'education' || key === 'qualifications') {
+          // Only filter string arrays, not object arrays like workExperience, education, qualifications, projects
+          if (key === 'workExperience' || key === 'education' || key === 'qualifications' || key === 'projects') {
             // For object arrays, keep all valid objects
             structured[key] = structured[key].filter(item => item && typeof item === 'object');
           } else if (key === 'skills') {
