@@ -822,7 +822,9 @@ class CVExtractionService {
         const lineLower = line.toLowerCase();
         
         // Check if we're entering work/project section
-        if (lineLower === 'work experience' || lineLower === 'work experiences' || lineLower.includes('employment')) {
+        if (lineLower === 'work experience' || lineLower === 'work experiences' || 
+            lineLower === 'experience' || lineLower === 'experiences' || 
+            lineLower.includes('employment')) {
           inWorkSection = true;
           inProjectSection = false;
           continue;
@@ -945,7 +947,83 @@ class CVExtractionService {
           }
         }
 
-        // Pattern 2: "Position/Project Name    Date1 – Date2" on same line
+        // Pattern 2: "Position | Date" with pipe separator (e.g., "Assistant Manager | April 2018- December 2022")
+        // Company name on next line
+        if (inWorkSection && line.includes('|') && line.length > 10) {
+          const pipePattern = /^(.+?)\s*\|\s*(.+)$/;
+          const match = line.match(pipePattern);
+          
+          if (match) {
+            const position = match[1].trim();
+            const dateText = match[2].trim();
+            
+            // Skip if this looks like an education entry (contains degree keywords as whole words or clear patterns)
+            const educationKeywords = ['msc', 'bachelor', 'master', 'diploma', 'degree', 'phd', 'doctorate', 'bsc'];
+            const isEducation = educationKeywords.some(keyword => {
+              const regex = new RegExp(`\\b${keyword}\\b`, 'i');
+              return regex.test(position);
+            });
+            
+            if (isEducation) {
+              continue;
+            }
+            
+            const dates = parseDates(dateText);
+            
+            // Get company name from next line
+            let company = 'Not specified';
+            let description = '';
+            if (i + 1 < lines.length) {
+              const nextLine = lines[i + 1].trim();
+              // Check if next line is company name (not a bullet point or empty line)
+              if (nextLine && !nextLine.startsWith('•') && !nextLine.startsWith('➢') && 
+                  !nextLine.startsWith('-') && nextLine.length > 5 && nextLine.length < 150) {
+                company = nextLine;
+                i++; // Skip the next line since we used it
+                
+                // Collect description from following bullet points
+                const descriptionLines = [];
+                for (let j = i + 1; j < lines.length && j < i + 15; j++) {
+                  const descLine = lines[j].trim();
+                  const descLineLower = descLine.toLowerCase();
+                  
+                  // Stop if we hit education keywords
+                  if (descLineLower.includes('msc') || descLineLower.includes('bachelor') || 
+                      descLineLower.includes('master') || descLineLower.includes('diploma') ||
+                      descLineLower.includes('degree') || descLineLower.includes('university') ||
+                      descLineLower.includes('college')) {
+                    break;
+                  }
+                  
+                  // Add bullet points
+                  if (descLine.startsWith('•') || descLine.startsWith('➢') || descLine.startsWith('-')) {
+                    descriptionLines.push(descLine.replace(/^[•➢\-]\s*/, ''));
+                  } else if (descLine.length > 0 && descLine.includes('|')) {
+                    // Stop if we hit a new work entry with pipe separator
+                    break;
+                  } else if (descLine.length === 0 && descriptionLines.length > 0) {
+                    // Stop at empty line if we already have some description
+                    break;
+                  }
+                }
+                description = descriptionLines.join(' ');
+              }
+            }
+            
+            if (position && dates.startDate) {
+              workExperiences.push({
+                company: company,
+                position: position,
+                startDate: dates.startDate,
+                endDate: dates.endDate || new Date().toISOString().split('T')[0],
+                description: description
+              });
+              continue;
+            }
+          }
+        }
+
+        // Pattern 3: "Position/Project Name    Date1 – Date2" on same line
         // This handles both work experience and projects with dates on the same line
         if ((inWorkSection || inProjectSection) && line.length > 10) {
           // Check if line contains a date range (e.g., "Oct 2023 – April 2024" or "Nov 2023 – Nov 2024")
@@ -956,6 +1034,18 @@ class CVExtractionService {
             const titleMatch = line.match(/^(.+?)\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)/i);
             if (titleMatch) {
               const position = titleMatch[1].trim();
+              
+              // Skip if this looks like an education entry (contains degree keywords as whole words or clear patterns)
+              const educationKeywords = ['msc', 'bachelor', 'master', 'diploma', 'degree', 'phd', 'doctorate', 'bsc'];
+              const isEducation = educationKeywords.some(keyword => {
+                const regex = new RegExp(`\\b${keyword}\\b`, 'i');
+                return regex.test(position);
+              });
+              
+              if (isEducation) {
+                continue;
+              }
+              
               const dates = parseDates(line);
               
               // Get company name from next line if in work experience section
@@ -982,13 +1072,14 @@ class CVExtractionService {
           }
         }
 
-        // Stop at next major section
+        // Stop at next major section (but NOT education, as work experience can appear after it in some CVs)
         if ((inWorkSection || inProjectSection) && (
           lineLower.includes('technical skills') || 
           lineLower.includes('strengths') ||
           lineLower === 'skills' ||
-          lineLower === 'education' ||
-          lineLower === 'personal profile'
+          lineLower === 'personal profile' ||
+          lineLower === 'references' ||
+          lineLower === 'hobbies'
         )) {
           inWorkSection = false;
           inProjectSection = false;
