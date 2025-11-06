@@ -112,42 +112,37 @@ async function extractPersonalDetails() {
     let lastName = '';
     if (name) {
       // Try to fix common PDF spacing issues
-      // If we see single letters followed by spaces (e.g., "S an ge eth"), merge them
-      let fixedName = name;
+      // If we see many short word fragments, try to merge them intelligently
+      const words = name.split(/\s+/).filter(w => w.length > 0);
       
-      // Pattern: single letter + space + single letter (repeated)
-      // "San geet h" -> "Sangeeth"
-      const hasCharSpacing = /\b[A-Za-z]\s+[A-Za-z]\s+[A-Za-z]/.test(name);
-      if (hasCharSpacing) {
-        // Try to intelligently merge - look for patterns where single chars are separated
-        const words = name.split(/\s+/);
-        const merged = [];
-        let currentWord = '';
+      // Count short words (1-4 chars) - if many, likely a spacing issue
+      const shortWords = words.filter(w => w.length <= 4).length;
+      const hasSpacingIssue = shortWords >= words.length * 0.5 && words.length > 3;
+      
+      let fixedName = name;
+      if (hasSpacingIssue) {
+        console.log(`\nDetected spacing issue: ${words.length} words, ${shortWords} are short`);
         
-        for (let i = 0; i < words.length; i++) {
-          const word = words[i];
-          if (word.length === 1 || word.length === 2) {
-            // Single or double char - might be part of a broken word
-            currentWord += word;
-          } else {
-            // Longer word - end current merge
-            if (currentWord) {
-              merged.push(currentWord);
-              currentWord = '';
-            }
-            merged.push(word);
-          }
-        }
-        if (currentWord) merged.push(currentWord);
+        // Strategy: Merge consecutive short words with longer words
+        // Heuristic: First half is first name, second half is last name
+        const midPoint = Math.floor(words.length / 2);
+        const firstNameParts = words.slice(0, midPoint);
+        const lastNameParts = words.slice(midPoint);
         
-        fixedName = merged.join(' ');
-        console.log(`\nFixed spacing: "${name}" -> "${fixedName}"`);
+        const firstName = firstNameParts.join('');
+        const lastName = lastNameParts.join('');
+        fixedName = firstName + ' ' + lastName;
+        
+        console.log(`Fixed spacing: "${name}" -> "${fixedName}"`);
       }
       
       const nameParts = fixedName.split(' ').filter(p => p.length > 0);
       if (nameParts.length >= 2) {
         firstName = nameParts[0];
         lastName = nameParts.slice(1).join(' ');
+      } else if (nameParts.length === 1) {
+        // Single name after merging
+        firstName = nameParts[0];
       }
     }
     

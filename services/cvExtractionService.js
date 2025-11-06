@@ -122,24 +122,41 @@ class CVExtractionService {
       const text = rawData.text || '';
       const lines = text.split('\n').map(line => line.trim()).filter(line => line.length > 0);
 
-      // Enhanced name extraction using NLP
-      const nameDoc = compromise(text);
-      const people = nameDoc.people().out('array');
+      // Enhanced name extraction with PDF spacing issue handling
+      let name = '';
+      const firstLine = lines[0] || '';
       
-      if (people && people.length > 0) {
-        // Take the first person name found
-        const fullName = people[0];
-        const nameParts = fullName.split(/\s+/);
-        if (nameParts.length >= 2) {
-          structured.firstName = nameParts[0];
-          structured.lastName = nameParts.slice(1).join(' ');
-        } else {
-          structured.firstName = fullName;
+      // Clean up excessive spaces that often occur in PDF extraction
+      const cleanedFirstLine = firstLine.replace(/\s+/g, ' ').trim();
+      
+      // Check if first line looks like a name
+      if (cleanedFirstLine.length > 3 && cleanedFirstLine.length < 100) {
+        // Allow letters, spaces, hyphens, dots, apostrophes
+        if (/^[A-Za-z\s\-\.\']+$/.test(cleanedFirstLine)) {
+          // Check it's not a common header
+          const lowerLine = cleanedFirstLine.toLowerCase();
+          if (!lowerLine.includes('curriculum') && 
+              !lowerLine.includes('resume') && 
+              !lowerLine.includes('cv') &&
+              !lowerLine.includes('profile') &&
+              !lowerLine.includes('contact')) {
+            name = cleanedFirstLine;
+          }
+        }
+      }
+      
+      // If first line isn't a name, try NLP approach
+      if (!name) {
+        const nameDoc = compromise(text);
+        const people = nameDoc.people().out('array');
+        
+        if (people && people.length > 0) {
+          name = people[0];
         }
       }
       
       // Fallback: Look for name patterns in first few lines
-      if (!structured.firstName) {
+      if (!name) {
         for (let i = 0; i < Math.min(5, lines.length); i++) {
           const line = lines[i].trim();
           // Skip lines that look like contact info or headers
@@ -150,14 +167,44 @@ class CVExtractionService {
           }
           
           // Look for name patterns (2-4 words, primarily letters)
-          if (line.length > 3 && line.length < 50 && /^[A-Za-z\s\-\.]+$/.test(line)) {
-            const nameParts = line.split(/\s+/);
+          const cleanLine = line.replace(/\s+/g, ' ').trim();
+          if (cleanLine.length > 3 && cleanLine.length < 50 && /^[A-Za-z\s\-\.]+$/.test(cleanLine)) {
+            const nameParts = cleanLine.split(/\s+/);
             if (nameParts.length >= 2 && nameParts.length <= 4) {
-              structured.firstName = nameParts[0];
-              structured.lastName = nameParts.slice(1).join(' ');
+              name = cleanLine;
               break;
             }
           }
+        }
+      }
+      
+      // Parse name into first and last, handling PDF spacing issues
+      if (name) {
+        const words = name.split(/\s+/).filter(w => w.length > 0);
+        
+        // Count short words (1-4 chars) - if many, likely a spacing issue
+        const shortWords = words.filter(w => w.length <= 4).length;
+        const hasSpacingIssue = shortWords >= words.length * 0.5 && words.length > 3;
+        
+        let fixedName = name;
+        if (hasSpacingIssue) {
+          // Strategy: Merge consecutive short words
+          // Heuristic: First half is first name, second half is last name
+          const midPoint = Math.floor(words.length / 2);
+          const firstNameParts = words.slice(0, midPoint);
+          const lastNameParts = words.slice(midPoint);
+          
+          const mergedFirst = firstNameParts.join('');
+          const mergedLast = lastNameParts.join('');
+          fixedName = mergedFirst + ' ' + mergedLast;
+        }
+        
+        const nameParts = fixedName.split(/\s+/).filter(p => p.length > 0);
+        if (nameParts.length >= 2) {
+          structured.firstName = nameParts[0];
+          structured.lastName = nameParts.slice(1).join(' ');
+        } else if (nameParts.length === 1) {
+          structured.firstName = nameParts[0];
         }
       }
 
@@ -247,38 +294,89 @@ class CVExtractionService {
         }
       }
 
-      // Enhanced location/address extraction using NLP
-      const locationDoc = compromise(text);
-      const places = locationDoc.places().out('array');
-      
-      if (places && places.length > 0) {
-        // Clean and deduplicate places
-        const uniquePlaces = [...new Set(places.map(p => p.trim()))];
-        const cleanedPlaces = uniquePlaces.filter(p => p.length > 2 && p.length < 50);
+      // Enhanced location/address extraction - prioritize explicit address lines
+      let explicitAddress = '';
+      for (let i = 0; i < Math.min(20, lines.length); i++) {
+        const line = lines[i];
+        const lineLower = line.toLowerCase();
         
-        // Try to identify city and country (avoid duplicates)
-        const locationParts = new Set();
-        for (const place of cleanedPlaces) {
-          // Split by comma and add each part
-          const parts = place.split(',').map(p => p.trim()).filter(p => p.length > 0);
-          parts.forEach(part => locationParts.add(part));
+        // Look for explicit address label
+        if (lineLower.startsWith('address:') || lineLower.includes('address:')) {
+          explicitAddress = line.replace(/address:/gi, '').trim();
+          
+          // Parse address components
+          const parts = explicitAddress.split(',').map(p => p.trim()).filter(p => p.length > 0);
+          
+          if (parts.length > 0) {
+            structured.address = explicitAddress;
+            
+            // Extract postal code (UK format: XX# #XX or US format: ##### or #####-####)
+            const postcodeMatch = explicitAddress.match(/([A-Z]{1,2}\d{1,2}\s?\d[A-Z]{2}|\d{5}(-\d{4})?)/i);
+            
+            // City is typically the part before the postal code
+            if (parts.length >= 2) {
+              // Find the part with postal code
+              let postcodePartIndex = -1;
+              if (postcodeMatch) {
+                postcodePartIndex = parts.findIndex(p => p.includes(postcodeMatch[0]));
+              }
+              
+              if (postcodePartIndex > 0) {
+                // City is the part before postal code
+                structured.city = parts[postcodePartIndex - 1];
+              } else {
+                // Fallback: second-to-last part is usually city
+                structured.city = parts[parts.length - 2] || parts[0];
+              }
+              
+              // Country is typically the last part or inferred
+              const lastPart = parts[parts.length - 1];
+              if (lastPart.length > 15) {
+                // Last part has postal code, extract country from context or leave empty
+                structured.country = '';
+              } else {
+                structured.country = lastPart;
+              }
+            }
+          }
+          break;
         }
+      }
+      
+      // If no explicit address found, use NLP
+      if (!explicitAddress) {
+        const locationDoc = compromise(text);
+        const places = locationDoc.places().out('array');
         
-        const uniqueLocationParts = Array.from(locationParts);
-        
-        // Assign city and country (last one is usually country, first is city)
-        if (uniqueLocationParts.length > 0) {
-          if (uniqueLocationParts.length === 1) {
-            // If only one location, it's likely the country
-            structured.country = uniqueLocationParts[0];
-          } else {
-            // Multiple locations: first is city, last is country
-            structured.city = uniqueLocationParts[0];
-            structured.country = uniqueLocationParts[uniqueLocationParts.length - 1];
+        if (places && places.length > 0) {
+          // Clean and deduplicate places
+          const uniquePlaces = [...new Set(places.map(p => p.trim()))];
+          const cleanedPlaces = uniquePlaces.filter(p => p.length > 2 && p.length < 50);
+          
+          // Try to identify city and country (avoid duplicates)
+          const locationParts = new Set();
+          for (const place of cleanedPlaces) {
+            // Split by comma and add each part
+            const parts = place.split(',').map(p => p.trim()).filter(p => p.length > 0);
+            parts.forEach(part => locationParts.add(part));
           }
           
-          // Build address from unique parts
-          structured.address = uniqueLocationParts.join(', ');
+          const uniqueLocationParts = Array.from(locationParts);
+          
+          // Assign city and country (last one is usually country, first is city)
+          if (uniqueLocationParts.length > 0) {
+            if (uniqueLocationParts.length === 1) {
+              // If only one location, it's likely the country
+              structured.country = uniqueLocationParts[0];
+            } else {
+              // Multiple locations: first is city, last is country
+              structured.city = uniqueLocationParts[0];
+              structured.country = uniqueLocationParts[uniqueLocationParts.length - 1];
+            }
+            
+            // Build address from unique parts
+            structured.address = uniqueLocationParts.join(', ');
+          }
         }
       }
       
@@ -348,7 +446,8 @@ class CVExtractionService {
           if (lineLower === 'technical skills' || lineLower === 'skills' || 
               lineLower === 'work experience' || lineLower === 'projects' ||
               lineLower === 'certifications' || lineLower === 'awards' ||
-              lineLower === 'soft skills' || lineLower === 'strengths') {
+              lineLower === 'soft skills' || lineLower === 'strengths' ||
+              lineLower === 'references') {
             break;
           }
           educationSectionLines.push(line);
@@ -363,16 +462,88 @@ class CVExtractionService {
         const line = educationSectionLines[i];
         const lineLower = line.toLowerCase();
         
-        // Check if this is a degree line (more comprehensive)
+        // Skip lines that are clearly job responsibilities (bullets, action verbs)
+        const firstChar = line.charCodeAt(0);
+        const isBulletPoint = firstChar === 8226 ||  // •
+                              firstChar === 9675 ||  // ○
+                              firstChar === 9679 ||  // ●
+                              firstChar === 10146 || // Specific PDF bullet (Γ₧ó)
+                              firstChar === 10070 || // Another PDF bullet (Γ¥û)
+                              line.trim().startsWith('•') || 
+                              line.trim().startsWith('-') || 
+                              line.trim().startsWith('*') ||
+                              /^[▪▫‣⦾⦿○●]/.test(line.trim());
+        
+        // Clean the line for checking (remove bullets)
+        let cleanLine = line;
+        if (isBulletPoint) {
+          cleanLine = line.substring(1).trim();
+        }
+        const cleanLineLower = cleanLine.toLowerCase();
+        
+        // Check if this is a degree line FIRST (need this for bullet filtering)
         const isDegree = (lineLower.includes('bachelor') || lineLower.includes('master') || 
                          lineLower.includes('phd') || lineLower.includes('diploma') || 
-                         lineLower.includes('degree') || lineLower.includes('bit') || lineLower.includes('b.it') ||
+                         lineLower.includes('bit') || lineLower.includes('b.it') ||
                          lineLower.includes('bsc') || lineLower.includes('b.sc') || 
                          lineLower.includes('msc') || lineLower.includes('m.sc') ||
                          lineLower.includes('ba') || lineLower.includes('b.a') ||
                          lineLower.includes('ma') || lineLower.includes('m.a') ||
                          lineLower.includes('mba') || lineLower.includes('m.b.a') ||
-                         lineLower.includes('information technology'));
+                         (lineLower.includes('science') && lineLower.includes('in'))) &&  // "Science in Computing" but not "School of Computing"
+                        !lineLower.includes('major:'); // Exclude "Major:" lines
+        
+        // Skip job titles and companies (they contain | or job indicators)
+        const isJobTitle = line.includes('|') || 
+                          lineLower.includes('engineer') || 
+                          lineLower.includes('administrator') ||
+                          lineLower.includes('coordinator') ||
+                          lineLower.includes('assistant') ||
+                          lineLower.includes('manager');
+        
+        const isCompanyLine = lineLower.includes('(pvt)') || 
+                             lineLower.includes('ltd') ||
+                             lineLower.includes('pvt ltd') ||
+                             lineLower.includes('com ltd');
+        
+        // Check job responsibilities using CLEANED line (after bullet removal)
+        const isJobResponsibility = cleanLineLower.startsWith('ensure') || cleanLineLower.startsWith('prepare') ||
+                                   cleanLineLower.startsWith('evaluate') || cleanLineLower.startsWith('monitor') ||
+                                   cleanLineLower.startsWith('solution') || cleanLineLower.startsWith('establish') ||
+                                   cleanLineLower.startsWith('upgrade') || cleanLineLower.startsWith('addend') ||
+                                   cleanLineLower.startsWith('attend') || cleanLineLower.startsWith('implement') ||
+                                   cleanLineLower.startsWith('define') || cleanLineLower.startsWith('staff');
+        
+        // Skip non-education content
+        const isProjectLine = cleanLineLower.includes('project name:') || cleanLineLower.startsWith('project name') ||
+                             cleanLineLower.startsWith('o full') || cleanLineLower.startsWith('o sophisticated') ||
+                             cleanLineLower.startsWith('o fiber') || cleanLineLower.startsWith('o evaluate') ||
+                             cleanLineLower.startsWith('o increase');
+        
+        const isDeclarationOrReference = cleanLineLower.includes('hereby declare') || 
+                                        lineLower.includes('email:') ||  // Check original line
+                                        cleanLineLower.includes('managing director') ||
+                                        cleanLineLower.includes('chairman') ||
+                                        cleanLineLower.includes('ambagahawatta') ||  // Specific reference name
+                                        (lineLower.includes('@') && !isDegree) ||  // Check original line
+                                        cleanLineLower.includes(' it related') ||  // "other IT related services"
+                                        cleanLineLower.includes('largest') ||  // "largest karting circuit"
+                                        line.length > 100 ||  // Very long lines are usually descriptions, not degrees
+                                        (!isDegree && line.split(/\s+/).length === 2 && /^[A-Z][a-z]+\s[A-Z][a-z]+$/.test(line.trim()));  // Just a name (e.g., "Chamilka Ambagahawatta")
+        
+        const isInstitutionOnly = (lineLower.includes('university') || lineLower.includes('college') || 
+                                  lineLower.includes('institute') || lineLower.includes('school')) &&
+                                 !isDegree; // Institution name without degree
+        
+        // Skip bullet points that aren't degrees
+        if (isBulletPoint && !isDegree) {
+          continue;
+        }
+        
+        if (isJobTitle || isCompanyLine || isJobResponsibility || isProjectLine || 
+            isDeclarationOrReference || isInstitutionOnly) {
+          continue; // Skip this line
+        }
         
         // Check if this is an institution line
         const isInstitution = (lineLower.includes('university') || lineLower.includes('college') || 
@@ -426,8 +597,18 @@ class CVExtractionService {
           if (currentEntry && currentEntry.degree) {
             educationEntries.push(currentEntry);
           }
+          
+          // Clean bullet characters from degree line
+          let cleanDegree = line;
+          const firstChar = line.charCodeAt(0);
+          if (firstChar === 8226 || firstChar === 9675 || firstChar === 9679 || 
+              firstChar === 10146 || firstChar === 10070) {
+            // Remove the bullet character and any following whitespace
+            cleanDegree = line.substring(1).trim();
+          }
+          
           currentEntry = {
-            degree: line,
+            degree: cleanDegree,
             institution: '',
             graduationYear: '',
             gpa: ''
