@@ -40,7 +40,8 @@
     "resume-parser": "^1.1.0",
     "sequelize": "^6.37.7",
     "url-regex-safe": "^4.0.0",
-    "winston": "^3.17.0"
+    "winston": "^3.17.0",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
   "devDependencies": {
     "jest": "^29.7.0",
