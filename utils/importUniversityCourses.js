@@ -2,15 +2,15 @@ const XLSX = require('xlsx');
 const mongoose = require('mongoose');
 const path = require('path');
 const fs = require('fs');
+require('dotenv').config();
 
 // MongoDB Connection
 const connectDB = async () => {
   try {
-    await mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/mentora-student-db', {
-      useNewUrlParser: true,
-      useUnifiedTopology: true,
-    });
+    const mongoUri = process.env.MONGODB_URI || 'mongodb://localhost:27017/mentora-student-db';
+    await mongoose.connect(mongoUri);
     console.log('✅ MongoDB Connected Successfully');
+    console.log(`   Database: ${mongoose.connection.name}`);
   } catch (error) {
     console.error('❌ MongoDB Connection Error:', error.message);
     process.exit(1);
@@ -62,30 +62,60 @@ const universityCourseSchema = new mongoose.Schema({
 
 const UniversityCourse = mongoose.model('UniversityCourse', universityCourseSchema);
 
-// Function to read Excel file and convert to JSON
+// Function to read Excel file and merge data from multiple sheets
 const readExcelFile = (filePath) => {
   try {
     console.log(`\n📖 Reading file: ${path.basename(filePath)}`);
     const workbook = XLSX.readFile(filePath);
     
-    // Process all sheets
-    const allData = [];
+    // Read all sheets into separate arrays
+    const sheetData = {};
     
     workbook.SheetNames.forEach(sheetName => {
       console.log(`   📄 Processing sheet: ${sheetName}`);
       const worksheet = workbook.Sheets[sheetName];
       const jsonData = XLSX.utils.sheet_to_json(worksheet);
-      
-      // Add sheet name to each record for reference
-      jsonData.forEach(row => {
-        row._sheetName = sheetName;
-      });
-      
-      allData.push(...jsonData);
+      sheetData[sheetName] = jsonData;
       console.log(`   ✓ Found ${jsonData.length} rows in ${sheetName}`);
     });
     
-    return allData;
+    // Find the main courses sheet (usually the first one or one with Course_ID)
+    const coursesSheetName = workbook.SheetNames[0];
+    const coursesData = sheetData[coursesSheetName] || [];
+    
+    console.log(`   🔗 Merging data from ${workbook.SheetNames.length} sheets...`);
+    
+    // Merge data from other sheets based on Course_ID or Course_Code
+    const mergedData = coursesData.map(course => {
+      const courseId = course.Course_ID || course.CourseID || course.Course_Code || course.CourseCode;
+      
+      // Merge data from all other sheets
+      workbook.SheetNames.forEach(sheetName => {
+        if (sheetName !== coursesSheetName) {
+          const otherSheetData = sheetData[sheetName] || [];
+          const matchingRow = otherSheetData.find(row => {
+            const rowId = row.Course_ID || row.CourseID || row.Course_Code || row.CourseCode;
+            return rowId === courseId;
+          });
+          
+          if (matchingRow) {
+            // Merge fields from matching row
+            Object.keys(matchingRow).forEach(key => {
+              // Don't overwrite if already exists and has value
+              if (!course[key] || course[key] === '') {
+                course[key] = matchingRow[key];
+              }
+            });
+          }
+        }
+      });
+      
+      return course;
+    });
+    
+    console.log(`   ✅ Merged ${mergedData.length} complete course records`);
+    
+    return mergedData;
   } catch (error) {
     console.error(`❌ Error reading file ${filePath}:`, error.message);
     return [];

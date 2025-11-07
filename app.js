@@ -7,6 +7,7 @@ const path = require('path');
 // Import routes
 const authRoutes = require('./routes/authRoutes');
 const studentRoutes = require('./routes/studentRoutes');
+const courseRoutes = require('./routes/courseRoutes');
 
 // Import middleware
 const { errorHandler, notFoundHandler } = require('./middlewares/errorHandler');
@@ -68,6 +69,7 @@ app.get('/health', (req, res) => {
 const apiPrefix = process.env.API_PREFIX || '/api/v1';
 app.use(`${apiPrefix}/auth`, authRoutes);
 app.use(`${apiPrefix}/students`, studentRoutes);
+app.use(`${apiPrefix}/courses`, courseRoutes);
 
 // 404 handler
 app.use(notFoundHandler);
