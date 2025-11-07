@@ -60,12 +60,13 @@ const updateProfile = async (req, res) => {
     if (updateData.englishLevel) student.englishLevel = updateData.englishLevel;
     
     // Handle both githubUrl and github (frontend sends 'github')
-    if (updateData.githubUrl) student.githubUrl = updateData.githubUrl;
-    if (updateData.github) student.githubUrl = updateData.github;
-    if (updateData.linkedinUrl) student.linkedinUrl = updateData.linkedinUrl;
-    if (updateData.linkedin) student.linkedinUrl = updateData.linkedin;
-    if (updateData.portfolioUrl) student.portfolioUrl = updateData.portfolioUrl;
-    if (updateData.portfolio) student.portfolioUrl = updateData.portfolio;
+    // Allow empty strings to clear the field
+    if (updateData.githubUrl !== undefined) student.githubUrl = updateData.githubUrl;
+    if (updateData.github !== undefined) student.githubUrl = updateData.github;
+    if (updateData.linkedinUrl !== undefined) student.linkedinUrl = updateData.linkedinUrl;
+    if (updateData.linkedin !== undefined) student.linkedinUrl = updateData.linkedin;
+    if (updateData.portfolioUrl !== undefined) student.portfolioUrl = updateData.portfolioUrl;
+    if (updateData.portfolio !== undefined) student.portfolioUrl = updateData.portfolio;
     
     // Update arrays
     if (updateData.education) student.education = updateData.education;
