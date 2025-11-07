@@ -13,12 +13,13 @@ const calculateMatchScore = (course, studentProfile) => {
     fieldMatch: 0,
     degreeLevelMatch: 0,
     studyModeMatch: 0,
+    locationMatch: 0,
     totalScore: 0,
     reasons: []
   };
 
-  // 1. IELTS Score Match (Weight: 30 points)
-  maxScore += 30;
+  // 1. IELTS Score Match (Weight: 25 points)
+  maxScore += 25;
   if (studentProfile.ieltsScore && course.ieltsOverall) {
     const studentIELTS = parseFloat(studentProfile.ieltsScore);
     const requiredIELTS = parseFloat(course.ieltsOverall);
@@ -26,23 +27,23 @@ const calculateMatchScore = (course, studentProfile) => {
     if (studentIELTS >= requiredIELTS) {
       const excess = studentIELTS - requiredIELTS;
       if (excess >= 1.0) {
-        score += 30; // Well above requirement
-        details.ieltsMatch = 30;
+        score += 25; // Well above requirement
+        details.ieltsMatch = 25;
         details.reasons.push(`IELTS ${studentIELTS} exceeds requirement of ${requiredIELTS}`);
       } else if (excess >= 0.5) {
-        score += 25; // Above requirement
-        details.ieltsMatch = 25;
+        score += 20; // Above requirement
+        details.ieltsMatch = 20;
         details.reasons.push(`IELTS ${studentIELTS} meets requirement of ${requiredIELTS}`);
       } else {
-        score += 20; // Just meets requirement
-        details.ieltsMatch = 20;
+        score += 15; // Just meets requirement
+        details.ieltsMatch = 15;
         details.reasons.push(`IELTS ${studentIELTS} meets minimum of ${requiredIELTS}`);
       }
     } else {
       const deficit = requiredIELTS - studentIELTS;
       if (deficit <= 0.5) {
-        score += 10; // Close to requirement
-        details.ieltsMatch = 10;
+        score += 8; // Close to requirement
+        details.ieltsMatch = 8;
         details.reasons.push(`IELTS ${studentIELTS} slightly below ${requiredIELTS} (may still apply)`);
       } else {
         details.reasons.push(`IELTS ${studentIELTS} below requirement of ${requiredIELTS}`);
@@ -50,8 +51,8 @@ const calculateMatchScore = (course, studentProfile) => {
     }
   }
 
-  // 2. Budget Match (Weight: 25 points)
-  maxScore += 25;
+  // 2. Budget Match (Weight: 20 points)
+  maxScore += 20;
   if (studentProfile.budget && course.tuitionFeeInternational) {
     const budget = parseFloat(studentProfile.budget);
     const fee = parseFloat(course.tuitionFeeInternational);
@@ -61,16 +62,16 @@ const calculateMatchScore = (course, studentProfile) => {
       const savingsPercent = (savings / budget) * 100;
       
       if (savingsPercent >= 20) {
-        score += 25; // Well within budget
-        details.budgetMatch = 25;
+        score += 20; // Well within budget
+        details.budgetMatch = 20;
         details.reasons.push(`Fee £${fee} well within budget of £${budget}`);
       } else if (savingsPercent >= 10) {
-        score += 20; // Within budget
-        details.budgetMatch = 20;
+        score += 16; // Within budget
+        details.budgetMatch = 16;
         details.reasons.push(`Fee £${fee} within budget of £${budget}`);
       } else {
-        score += 15; // Just within budget
-        details.budgetMatch = 15;
+        score += 12; // Just within budget
+        details.budgetMatch = 12;
         details.reasons.push(`Fee £${fee} fits budget of £${budget}`);
       }
     } else {
@@ -78,8 +79,8 @@ const calculateMatchScore = (course, studentProfile) => {
       const excessPercent = (excess / budget) * 100;
       
       if (excessPercent <= 10) {
-        score += 8; // Slightly over budget
-        details.budgetMatch = 8;
+        score += 6; // Slightly over budget
+        details.budgetMatch = 6;
         details.reasons.push(`Fee £${fee} slightly above budget (may consider with scholarship)`);
       } else {
         details.reasons.push(`Fee £${fee} exceeds budget of £${budget}`);
@@ -139,6 +140,40 @@ const calculateMatchScore = (course, studentProfile) => {
     }
   }
 
+  // 6. Location Preference Match (Weight: 20 points)
+  maxScore += 20;
+  if (studentProfile.preferredLocations && course.city) {
+    const preferredLocs = Array.isArray(studentProfile.preferredLocations) 
+      ? studentProfile.preferredLocations 
+      : [studentProfile.preferredLocations];
+    
+    const courseCity = course.city.toLowerCase();
+    const courseRegion = (course.region || '').toLowerCase();
+    
+    let locationMatchScore = 0;
+    let matchedLocation = null;
+    
+    preferredLocs.forEach(location => {
+      const locLower = location.toLowerCase();
+      // Check for city match (highest priority)
+      if (courseCity.includes(locLower) || locLower.includes(courseCity)) {
+        locationMatchScore = Math.max(locationMatchScore, 20);
+        matchedLocation = course.city;
+      }
+      // Check for region match (medium priority)
+      else if (courseRegion.includes(locLower) || locLower.includes(courseRegion)) {
+        locationMatchScore = Math.max(locationMatchScore, 12);
+        matchedLocation = course.region;
+      }
+    });
+    
+    if (locationMatchScore > 0) {
+      score += locationMatchScore;
+      details.locationMatch = locationMatchScore;
+      details.reasons.push(`Located in preferred area: ${matchedLocation}`);
+    }
+  }
+
   // Calculate final percentage score
   const finalScore = maxScore > 0 ? Math.round((score / maxScore) * 100) : 0;
   details.totalScore = finalScore;
@@ -161,14 +196,15 @@ exports.getRankedCourses = async (req, res) => {
       preferredDegreeLevel, // Bachelors, Masters, Doctoral
       preferredStudyMode, // Full-time, Part-time
       preferredUniversities, // Array of university names
+      preferredLocations, // Array of city/region names (NEW)
       minScore = 30 // Minimum match score to include
     } = req.body;
 
     // Validate required fields
-    if (!ieltsScore && !budget && !fieldOfInterest) {
+    if (!ieltsScore && !budget && !fieldOfInterest && !preferredLocations) {
       return res.status(400).json({
         success: false,
-        error: 'Please provide at least one criterion (IELTS score, budget, or field of interest)'
+        error: 'Please provide at least one criterion (IELTS score, budget, field of interest, or location preference)'
       });
     }
 
@@ -221,7 +257,8 @@ exports.getRankedCourses = async (req, res) => {
       budget,
       fieldOfInterest,
       preferredDegreeLevel,
-      preferredStudyMode
+      preferredStudyMode,
+      preferredLocations
     };
 
     const rankedCourses = courses.map(course => {
@@ -362,6 +399,14 @@ exports.getCourseStats = async (req, res) => {
         { $sort: { count: -1 } },
         { $limit: 10 }
       ]),
+      byCity: await UniversityCourse.aggregate([
+        { $group: { _id: '$city', count: { $sum: 1 } } },
+        { $sort: { count: -1 } }
+      ]),
+      byRegion: await UniversityCourse.aggregate([
+        { $group: { _id: '$region', count: { $sum: 1 } } },
+        { $sort: { count: -1 } }
+      ]),
       feeRange: await UniversityCourse.aggregate([
         { 
           $group: { 
@@ -394,6 +439,72 @@ exports.getCourseStats = async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Failed to retrieve statistics',
+      details: error.message
+    });
+  }
+};
+
+/**
+ * Get all cities (unique list)
+ */
+exports.getCities = async (req, res) => {
+  try {
+    const cities = await UniversityCourse.distinct('city');
+    
+    // Get course count per city
+    const citiesWithCounts = await UniversityCourse.aggregate([
+      { $group: { _id: '$city', count: { $sum: 1 }, region: { $first: '$region' } } },
+      { $sort: { count: -1 } }
+    ]);
+    
+    res.status(200).json({
+      success: true,
+      cities: citiesWithCounts.map(c => ({
+        city: c._id,
+        region: c.region,
+        courseCount: c.count
+      })),
+      count: cities.length
+    });
+
+  } catch (error) {
+    console.error('Error in getCities:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to retrieve cities',
+      details: error.message
+    });
+  }
+};
+
+/**
+ * Get all regions (unique list)
+ */
+exports.getRegions = async (req, res) => {
+  try {
+    const regions = await UniversityCourse.distinct('region');
+    
+    // Get course count per region
+    const regionsWithCounts = await UniversityCourse.aggregate([
+      { $group: { _id: '$region', count: { $sum: 1 }, cities: { $addToSet: '$city' } } },
+      { $sort: { count: -1 } }
+    ]);
+    
+    res.status(200).json({
+      success: true,
+      regions: regionsWithCounts.map(r => ({
+        region: r._id,
+        cities: r.cities,
+        courseCount: r.count
+      })),
+      count: regions.length
+    });
+
+  } catch (error) {
+    console.error('Error in getRegions:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to retrieve regions',
       details: error.message
     });
   }

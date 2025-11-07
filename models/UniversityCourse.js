@@ -13,6 +13,11 @@ const universityCourseSchema = new mongoose.Schema({
   courseUrl: { type: String },
   courseDescription: { type: String },
   status: { type: String, default: 'Active' },
+  
+  // Location Information
+  city: { type: String },
+  region: { type: String },
+  country: { type: String, default: 'United Kingdom' },
 
   // Fees & Intakes
   tuitionFeeLocal: { type: Number },
@@ -51,6 +56,8 @@ universityCourseSchema.index({ degreeLevel: 1 });
 universityCourseSchema.index({ tuitionFeeInternational: 1 });
 universityCourseSchema.index({ ieltsOverall: 1 });
 universityCourseSchema.index({ courseId: 1 }, { unique: true });
+universityCourseSchema.index({ city: 1 });
+universityCourseSchema.index({ region: 1 });
 
 // Text search index for course name and description
 universityCourseSchema.index({ courseName: 'text', courseDescription: 'text' });

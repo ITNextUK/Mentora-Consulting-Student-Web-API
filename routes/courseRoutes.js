@@ -32,6 +32,20 @@ router.get('/meta/degree-levels', courseController.getDegreeLevels);
 router.get('/meta/stats', courseController.getCourseStats);
 
 /**
+ * @route   GET /api/v1/courses/meta/cities
+ * @desc    Get all cities with course counts
+ * @access  Public
+ */
+router.get('/meta/cities', courseController.getCities);
+
+/**
+ * @route   GET /api/v1/courses/meta/regions
+ * @desc    Get all regions with course counts
+ * @access  Public
+ */
+router.get('/meta/regions', courseController.getRegions);
+
+/**
  * @route   GET /api/v1/courses/:courseId
  * @desc    Get course by ID
  * @access  Public
