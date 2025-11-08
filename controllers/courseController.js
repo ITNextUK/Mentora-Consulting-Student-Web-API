@@ -1,6 +1,189 @@
 const UniversityCourse = require('../models/UniversityCourse');
 
 /**
+ * Check if student meets entry requirements for a course
+ * Returns { eligible: boolean, failedRequirements: [], warnings: [] }
+ */
+const checkEntryRequirements = (course, studentProfile) => {
+  const result = {
+    eligible: true,
+    failedRequirements: [],
+    warnings: [],
+    details: {}
+  };
+
+  // 1. Check IELTS Requirements (HARD REQUIREMENT)
+  if (course.ieltsOverall && studentProfile.ieltsScore) {
+    const studentIELTS = parseFloat(studentProfile.ieltsScore);
+    const requiredIELTS = parseFloat(course.ieltsOverall);
+    
+    result.details.ieltsCheck = {
+      studentScore: studentIELTS,
+      required: requiredIELTS,
+      met: studentIELTS >= requiredIELTS
+    };
+    
+    if (studentIELTS < requiredIELTS) {
+      const deficit = (requiredIELTS - studentIELTS).toFixed(1);
+      result.eligible = false;
+      result.failedRequirements.push(`IELTS: Need ${requiredIELTS}, have ${studentIELTS} (${deficit} points short)`);
+    } else if (studentIELTS < requiredIELTS + 0.5) {
+      result.warnings.push(`IELTS score ${studentIELTS} just meets requirement of ${requiredIELTS}`);
+    }
+  }
+
+  // 2. Check GPA Requirements (if student has GPA data)
+  if (course.minimumGpa && studentProfile.gpa) {
+    const courseGPA = course.minimumGpa.toLowerCase();
+    const studentGPA = parseFloat(studentProfile.gpa);
+    
+    // Skip GPA check if course uses UCAS points or non-numeric requirements
+    if (courseGPA.includes('ucas') || courseGPA.includes('points') || 
+        courseGPA.includes('varies') || courseGPA.includes('hnd') || 
+        courseGPA.includes('fda') || courseGPA.includes('master degree')) {
+      // Skip - these are UK-specific admission requirements, not GPA
+      result.details.gpaCheck = {
+        studentGPA: studentGPA,
+        required: 0,
+        met: true,
+        note: 'Course uses alternative admission criteria'
+      };
+    } else {
+      // Parse different GPA formats from course data (e.g., "2.2/4.0", "3.0", "2:2")
+      let requiredGPA = 0;
+      if (courseGPA.includes('2.2/4') || courseGPA.includes('2:2')) {
+        requiredGPA = 2.2;
+      } else if (courseGPA.includes('2.1/4') || courseGPA.includes('2:1')) {
+        requiredGPA = 2.5;
+      } else if (courseGPA.includes('1st') || courseGPA.includes('first')) {
+        requiredGPA = 3.5;
+      } else {
+        const gpaMatch = courseGPA.match(/(\d+\.?\d*)/);
+        if (gpaMatch) {
+          requiredGPA = parseFloat(gpaMatch[1]);
+          // If extracted number is > 10, it's likely not a GPA
+          if (requiredGPA > 10) {
+            requiredGPA = 0; // Skip this requirement
+          }
+        }
+      }
+      
+      if (requiredGPA > 0) {
+        result.details.gpaCheck = {
+          studentGPA: studentGPA,
+          required: requiredGPA,
+          met: studentGPA >= requiredGPA
+        };
+        
+        if (studentGPA < requiredGPA) {
+          result.eligible = false;
+          result.failedRequirements.push(`GPA: Need ${requiredGPA}/4.0, have ${studentGPA}/4.0`);
+        }
+      }
+    }
+  }
+
+  // 3. Check Academic Requirements (Bachelor's degree for Masters, etc.)
+  if (course.academicRequirements && studentProfile.education) {
+    const requirements = course.academicRequirements.toLowerCase();
+    const hasEducation = Array.isArray(studentProfile.education) && studentProfile.education.length > 0;
+    
+    // Check for Bachelor's degree requirement
+    if (requirements.includes("bachelor") && hasEducation) {
+      const hasBachelors = studentProfile.education.some(edu => 
+        edu && edu.degree && typeof edu.degree === 'string' && (
+          edu.degree.toLowerCase().includes('bachelor') ||
+          edu.degree.toLowerCase().includes('bsc') ||
+          edu.degree.toLowerCase().includes('ba') ||
+          edu.degree.toLowerCase().includes('beng')
+        )
+      );
+      
+      if (!hasBachelors && course.degreeLevel && course.degreeLevel.toLowerCase().includes('master')) {
+        result.warnings.push("Bachelor's degree may be required for Master's programs");
+      }
+    }
+    
+    // Check for specific GPA from requirements text
+    if (requirements.includes('2:2') || requirements.includes('2.2')) {
+      result.details.degreeClassRequired = '2:2 or above';
+    } else if (requirements.includes('2:1') || requirements.includes('2.1')) {
+      result.details.degreeClassRequired = '2:1 or above';
+    }
+  }
+
+  // 4. Check Work Experience Requirements
+  if (course.workExperience && course.workExperience.toLowerCase() !== 'not required') {
+    const hasWorkExperience = studentProfile.workExperience && 
+                              Array.isArray(studentProfile.workExperience) && 
+                              studentProfile.workExperience.length > 0;
+    
+    result.details.workExperienceRequired = course.workExperience;
+    
+    if (!hasWorkExperience) {
+      // Don't mark as ineligible, but warn about it
+      result.warnings.push(`Work experience may be required: ${course.workExperience}`);
+    }
+  }
+
+  // 5. Check Prerequisites/Subject Requirements
+  if (course.prerequisites && studentProfile.education) {
+    const prereqs = course.prerequisites.toLowerCase();
+    result.details.prerequisites = course.prerequisites;
+    
+    // Check if student's field of study matches prerequisites
+    if (studentProfile.education && Array.isArray(studentProfile.education)) {
+      const studentFields = studentProfile.education
+        .filter(edu => edu && edu.fieldOfStudy && typeof edu.fieldOfStudy === 'string')
+        .map(edu => edu.fieldOfStudy.toLowerCase());
+      
+      // Common prerequisite checks
+      if (prereqs.includes('computing') || prereqs.includes('computer science')) {
+        const hasRelevantBackground = studentFields.some(field => 
+          field.includes('computer') || 
+          field.includes('computing') || 
+          field.includes('software') ||
+          field.includes('it') ||
+          field.includes('information technology')
+        );
+        
+        if (!hasRelevantBackground) {
+          result.warnings.push('Relevant computing/CS background may be required');
+        }
+      }
+      
+      if (prereqs.includes('mathematics') || prereqs.includes('quantitative')) {
+        result.warnings.push('Mathematics or quantitative background may be required');
+      }
+    }
+  }
+
+  // 6. Check Budget (SOFT - allow 20% over for scholarship possibilities)
+  if (course.tuitionFeeInternational && studentProfile.budget) {
+    const fee = parseFloat(course.tuitionFeeInternational);
+    const budget = parseFloat(studentProfile.budget);
+    const overBudget = fee - budget;
+    const overBudgetPercent = (overBudget / budget) * 100;
+    
+    result.details.budgetCheck = {
+      courseFee: fee,
+      studentBudget: budget,
+      affordable: fee <= budget,
+      overBudget: overBudget > 0 ? overBudget : 0
+    };
+    
+    if (fee > budget * 1.2) {
+      // More than 20% over budget - mark as warning
+      result.warnings.push(`Fee £${fee} exceeds budget by £${Math.round(overBudget)} (${Math.round(overBudgetPercent)}%)`);
+    } else if (fee > budget) {
+      result.warnings.push(`Fee £${fee} slightly over budget (consider scholarships)`);
+    }
+  }
+
+  return result;
+};
+
+/**
  * Calculate match score for a course based on student qualifications
  * Returns a score between 0-100
  */
@@ -196,8 +379,13 @@ exports.getRankedCourses = async (req, res) => {
       preferredDegreeLevel, // Bachelors, Masters, Doctoral
       preferredStudyMode, // Full-time, Part-time
       preferredUniversities, // Array of university names
-      preferredLocations, // Array of city/region names (NEW)
-      minScore = 30 // Minimum match score to include
+      preferredLocations, // Array of city/region names
+      minScore = 30, // Minimum match score to include
+      // NEW: Student profile for entry requirements check
+      gpa, // Student's GPA
+      education, // Array of education history
+      workExperience, // Array of work experience
+      filterByRequirements = false // Whether to filter out courses student doesn't qualify for (default: false)
     } = req.body;
 
     // Validate required fields
@@ -211,15 +399,8 @@ exports.getRankedCourses = async (req, res) => {
     // Build base query
     const query = { status: 'Active' };
 
-    // Filter by degree level if specified
-    if (preferredDegreeLevel) {
-      query.degreeLevel = new RegExp(preferredDegreeLevel, 'i');
-    }
-
-    // Filter by study mode if specified
-    if (preferredStudyMode) {
-      query.studyMode = new RegExp(preferredStudyMode, 'i');
-    }
+    // Don't use degree level and study mode as hard filters
+    // They will be used for scoring instead to give more flexible results
 
     // Filter by preferred universities if specified
     if (preferredUniversities && preferredUniversities.length > 0) {
@@ -233,9 +414,9 @@ exports.getRankedCourses = async (req, res) => {
       query.ieltsOverall = { $lte: ielts + 0.5 };
     }
 
-    // Budget hard filter - include courses up to 15% over budget (scholarship potential)
+    // Budget hard filter - include courses up to 20% over budget (scholarship potential)
     if (budget) {
-      const maxBudget = parseFloat(budget) * 1.15;
+      const maxBudget = parseFloat(budget) * 1.20;
       query.tuitionFeeInternational = { $lte: maxBudget };
     }
 
@@ -251,32 +432,60 @@ exports.getRankedCourses = async (req, res) => {
       });
     }
 
-    // Calculate match scores for all courses
+    // Build comprehensive student profile
     const studentProfile = {
       ieltsScore,
       budget,
       fieldOfInterest,
       preferredDegreeLevel,
       preferredStudyMode,
-      preferredLocations
+      preferredLocations,
+      gpa,
+      education,
+      workExperience
     };
 
+    // Check entry requirements and calculate match scores
     const rankedCourses = courses.map(course => {
-      const matchResult = calculateMatchScore(course.toObject(), studentProfile);
+      const courseObj = course.toObject();
+      
+      // Check if student meets entry requirements
+      const requirementsCheck = checkEntryRequirements(courseObj, studentProfile);
+      
+      // Calculate match score
+      const matchResult = calculateMatchScore(courseObj, studentProfile);
+      
       return {
-        ...course.toObject(),
+        ...courseObj,
         matchScore: matchResult.score,
-        matchDetails: matchResult.details
+        matchDetails: matchResult.details,
+        entryRequirements: {
+          eligible: requirementsCheck.eligible,
+          failedRequirements: requirementsCheck.failedRequirements,
+          warnings: requirementsCheck.warnings,
+          details: requirementsCheck.details
+        }
       };
     });
 
+    // Filter courses based on entry requirements if enabled
+    let filteredCourses = rankedCourses;
+    if (filterByRequirements) {
+      // Only show courses student is eligible for OR courses with only warnings (soft requirements)
+      filteredCourses = rankedCourses.filter(course => 
+        course.entryRequirements.eligible || 
+        (course.entryRequirements.failedRequirements.length === 0 && 
+         course.entryRequirements.warnings.length > 0)
+      );
+    }
+
     // Filter by minimum score and sort by match score
-    const filteredCourses = rankedCourses
+    const scoredCourses = filteredCourses
       .filter(course => course.matchScore >= minScore)
       .sort((a, b) => b.matchScore - a.matchScore);
 
     // Add ranking
-    const finalCourses = filteredCourses.map((course, index) => ({
+    const finalCourses = scoredCourses.map((course, index) => ({
       ...course,
       rank: index + 1
     }));
