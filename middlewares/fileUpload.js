@@ -1,16 +1,17 @@
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const { put } = require('@vercel/blob');
 const { createErrorResponse } = require('../utils/responseHelper');
+
+// Check if running on Vercel (serverless environment)
+const isVercel = process.env.VERCEL === '1' || process.env.VERCEL_ENV;
 
 // Ensure upload directories exist (skip on Vercel - read-only filesystem)
 const uploadDirs = {
   cv: path.join(__dirname, '../uploads/cv'),
   profilePictures: path.join(__dirname, '../uploads/profilePictures')
 };
-
-// Check if running on Vercel (serverless environment)
-const isVercel = process.env.VERCEL === '1' || process.env.VERCEL_ENV;
 
 if (!isVercel) {
   // Only create directories if NOT on Vercel (local/traditional server)
@@ -19,33 +20,26 @@ if (!isVercel) {
       fs.mkdirSync(dir, { recursive: true });
     }
   });
+  console.log('📁 Local file upload directories ready');
 } else {
-  console.warn('⚠️  Running on Vercel - File uploads disabled (read-only filesystem). Migrate to cloud storage (Cloudinary/S3/Vercel Blob).');
+  console.log('☁️  Using Vercel Blob Storage for file uploads');
 }
 
-// CV Storage Configuration
-const cvStorage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, uploadDirs.cv);
-  },
-  filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    const ext = path.extname(file.originalname);
-    cb(null, 'cv-' + req.studentId + '-' + uniqueSuffix + ext);
-  }
-});
-
-// Profile Picture Storage Configuration
-const profilePictureStorage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, uploadDirs.profilePictures);
-  },
-  filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    const ext = path.extname(file.originalname);
-    cb(null, 'profile-' + req.studentId + '-' + uniqueSuffix + ext);
-  }
-});
+// Storage configuration - use memory storage on Vercel, disk storage locally
+const storageConfig = isVercel 
+  ? multer.memoryStorage() // Store files in memory for Vercel Blob upload
+  : multer.diskStorage({   // Store files on disk for local development
+      destination: (req, file, cb) => {
+        const dir = file.fieldname === 'cv' ? uploadDirs.cv : uploadDirs.profilePictures;
+        cb(null, dir);
+      },
+      filename: (req, file, cb) => {
+        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+        const ext = path.extname(file.originalname);
+        const prefix = file.fieldname === 'cv' ? 'cv' : 'profile';
+        cb(null, `${prefix}-${req.studentId}-${uniqueSuffix}${ext}`);
+      }
+    });
 
 // File Filter for CV (PDF, DOC, DOCX)
 const cvFileFilter = (req, file, cb) => {
@@ -80,7 +74,7 @@ const profilePictureFileFilter = (req, file, cb) => {
 
 // Multer Upload Configurations
 const uploadCV = multer({
-  storage: cvStorage,
+  storage: storageConfig,
   fileFilter: cvFileFilter,
   limits: {
     fileSize: 10 * 1024 * 1024 // 10MB
@@ -88,17 +82,35 @@ const uploadCV = multer({
 }).single('cv');
 
 const uploadProfilePicture = multer({
-  storage: profilePictureStorage,
+  storage: storageConfig,
   fileFilter: profilePictureFileFilter,
   limits: {
     fileSize: 5 * 1024 * 1024 // 5MB
   }
 }).single('profilePicture');
 
+// Upload to Vercel Blob Storage
+async function uploadToVercelBlob(file, folder) {
+  if (!process.env.BLOB_READ_WRITE_TOKEN) {
+    throw new Error('BLOB_READ_WRITE_TOKEN environment variable is not set');
+  }
+
+  const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+  const ext = path.extname(file.originalname);
+  const fileName = `${folder}/${file.fieldname}-${uniqueSuffix}${ext}`;
+
+  const blob = await put(fileName, file.buffer, {
+    access: 'public',
+    token: process.env.BLOB_READ_WRITE_TOKEN,
+  });
+
+  return blob.url;
+}
+
 // Error handling wrapper
-const handleUploadError = (uploadFn) => {
-  return (req, res, next) => {
-    uploadFn(req, res, (err) => {
+const handleUploadError = (uploadFn, folder) => {
+  return async (req, res, next) => {
+    uploadFn(req, res, async (err) => {
       if (err instanceof multer.MulterError) {
         if (err.code === 'LIMIT_FILE_SIZE') {
           return res.status(400).json(
@@ -113,6 +125,21 @@ const handleUploadError = (uploadFn) => {
           createErrorResponse(err.message)
         );
       }
+
+      // If on Vercel, upload to Blob Storage
+      if (isVercel && req.file) {
+        try {
+          const blobUrl = await uploadToVercelBlob(req.file, folder);
+          req.file.path = blobUrl; // Store blob URL in file.path for consistency
+          req.file.isBlob = true; // Flag to indicate this is a blob URL
+        } catch (blobError) {
+          console.error('Error uploading to Vercel Blob:', blobError);
+          return res.status(500).json(
+            createErrorResponse('Failed to upload file to cloud storage')
+          );
+        }
+      }
+
       next();
     });
   };
@@ -133,8 +160,9 @@ const deleteFile = (filePath) => {
 };
 
 module.exports = {
-  uploadCV: handleUploadError(uploadCV),
-  uploadProfilePicture: handleUploadError(uploadProfilePicture),
+  uploadCV: handleUploadError(uploadCV, 'cv'),
+  uploadProfilePicture: handleUploadError(uploadProfilePicture, 'profile-pictures'),
   deleteFile,
-  uploadDirs
+  uploadDirs,
+  isVercel
 };
