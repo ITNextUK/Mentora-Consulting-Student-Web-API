@@ -35,8 +35,11 @@ const logger = winston.createLogger({
   ]
 });
 
-// Add file transports in production
-if (process.env.NODE_ENV === 'production') {
+// Add file transports ONLY in production AND when not on serverless (Vercel)
+// Vercel has read-only filesystem, so file logging will fail
+const isVercel = process.env.VERCEL === '1' || process.env.VERCEL_ENV;
+
+if (process.env.NODE_ENV === 'production' && !isVercel) {
   const logsDir = path.join(__dirname, '../logs');
   
   logger.add(
@@ -55,6 +58,11 @@ if (process.env.NODE_ENV === 'production') {
       maxFiles: 5
     })
   );
+}
+
+// Log where logs are going
+if (isVercel) {
+  logger.info('🚀 Running on Vercel - file logging disabled, using console only');
 }
 
 module.exports = logger;
