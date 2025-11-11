@@ -110,16 +110,27 @@ const uploadCV = async (req, res) => {
     }
 
     const studentId = req.studentId;
-    // Store relative path from project root
-    // req.file.path is absolute, we need to make it relative
-    const absolutePath = req.file.path.replace(/\\/g, '/'); // Normalize path separators
-    const projectRoot = path.join(__dirname, '..').replace(/\\/g, '/');
-    const cvPath = absolutePath.replace(projectRoot + '/', ''); // Remove project root to get relative path
     
-    logger.info(`Uploading CV for student ${studentId}`);
-    logger.info(`  Absolute path: ${absolutePath}`);
-    logger.info(`  Project root: ${projectRoot}`);
-    logger.info(`  Relative path (saving to DB): ${cvPath}`);
+    // Check if this is a Vercel Blob URL or local file path
+    const isBlob = req.file.isBlob || req.file.path.startsWith('http');
+    let cvPath;
+    
+    if (isBlob) {
+      // On Vercel, req.file.path is already a Blob URL
+      cvPath = req.file.path;
+      logger.info(`Uploading CV to Blob Storage for student ${studentId}`);
+      logger.info(`  Blob URL: ${cvPath}`);
+    } else {
+      // Local development - store relative path from project root
+      const absolutePath = req.file.path.replace(/\\/g, '/'); // Normalize path separators
+      const projectRoot = path.join(__dirname, '..').replace(/\\/g, '/');
+      cvPath = absolutePath.replace(projectRoot + '/', ''); // Remove project root to get relative path
+      
+      logger.info(`Uploading CV locally for student ${studentId}`);
+      logger.info(`  Absolute path: ${absolutePath}`);
+      logger.info(`  Project root: ${projectRoot}`);
+      logger.info(`  Relative path (saving to DB): ${cvPath}`);
+    }
 
     // Get current student
     const student = await Student.findById(studentId);
@@ -130,8 +141,8 @@ const uploadCV = async (req, res) => {
       );
     }
     
-    // Delete old CV if exists
-    if (student.cvPath) {
+    // Delete old CV if exists (only for local files, not Blob URLs)
+    if (student.cvPath && !student.cvPath.startsWith('http')) {
       const oldPath = path.join(__dirname, '..', student.cvPath);
       deleteFile(oldPath);
     }
@@ -145,14 +156,15 @@ const uploadCV = async (req, res) => {
     res.json(
       createSuccessResponse('CV uploaded successfully', {
         cvPath,
-        fileName: req.file.filename
+        fileName: req.file.originalname || req.file.filename,
+        isBlob
       })
     );
   } catch (error) {
     logger.error('CV upload error:', error);
     
-    // Delete uploaded file on error
-    if (req.file) {
+    // Delete uploaded file on error (only for local files)
+    if (req.file && !req.file.isBlob) {
       deleteFile(req.file.path);
     }
     
@@ -188,16 +200,27 @@ const extractCVData = async (req, res) => {
       );
     }
 
-    const cvFilePath = path.join(__dirname, '..', student.cvPath);
-    logger.info(`Full CV file path: ${cvFilePath}`);
+    // Check if this is a Blob URL (for Vercel) or local file path
+    const isBlob = student.cvPath.startsWith('http');
+    let cvFilePath;
     
-    // Check if file exists
-    if (!fs.existsSync(cvFilePath)) {
-      logger.error(`CV file not found at path: ${cvFilePath}`);
-      logger.error(`Attempted path construction: __dirname='${__dirname}', cvPath='${student.cvPath}'`);
-      return res.status(404).json(
-        createErrorResponse('CV file not found on server. Please upload again.')
-      );
+    if (isBlob) {
+      // For Blob URLs, pass the URL directly to the extraction service
+      cvFilePath = student.cvPath;
+      logger.info(`Using Blob URL for extraction: ${cvFilePath}`);
+    } else {
+      // For local files, construct the full path
+      cvFilePath = path.join(__dirname, '..', student.cvPath);
+      logger.info(`Full CV file path: ${cvFilePath}`);
+      
+      // Check if file exists (only for local files)
+      if (!fs.existsSync(cvFilePath)) {
+        logger.error(`CV file not found at path: ${cvFilePath}`);
+        logger.error(`Attempted path construction: __dirname='${__dirname}', cvPath='${student.cvPath}'`);
+        return res.status(404).json(
+          createErrorResponse('CV file not found on server. Please upload again.')
+        );
+      }
     }
 
     logger.info(`Extracting CV data from: ${cvFilePath}`);
