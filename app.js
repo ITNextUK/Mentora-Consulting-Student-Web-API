@@ -19,7 +19,7 @@ const app = express();
 // Security middleware
 app.use(helmet());
 
-// CORS configuration
+// CORS configuration - Allow Cloudflare Pages and localhost
 const allowedOrigins = [
   'http://localhost:5173',
   'http://localhost:5174',
