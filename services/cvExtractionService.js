@@ -8,31 +8,89 @@ const emailAddresses = require('email-addresses');
 const urlRegex = require('url-regex-safe');
 const natural = require('natural');
 const compromise = require('compromise');
+const https = require('https');
+const http = require('http');
 
 class CVExtractionService {
   /**
+   * Download file from URL to buffer
+   * @param {string} url - URL to download from
+   * @returns {Promise<Buffer>} File buffer
+   */
+  static async downloadFileToBuffer(url) {
+    return new Promise((resolve, reject) => {
+      const protocol = url.startsWith('https') ? https : http;
+      
+      protocol.get(url, (response) => {
+        if (response.statusCode !== 200) {
+          reject(new Error(`Failed to download file: ${response.statusCode}`));
+          return;
+        }
+        
+        const chunks = [];
+        response.on('data', (chunk) => chunks.push(chunk));
+        response.on('end', () => resolve(Buffer.concat(chunks)));
+        response.on('error', reject);
+      }).on('error', reject);
+    });
+  }
+
+  /**
    * Extract data from uploaded CV file
-   * @param {string} filePath - Path to the uploaded CV file
+   * @param {string} filePath - Path to the uploaded CV file or Blob URL
    * @returns {Promise<Object>} Extracted CV data
    */
   static async extractCvData(filePath) {
     try {
-      // Check if file exists
-      if (!fs.existsSync(filePath)) {
-        throw new Error('CV file not found');
+      // Check if this is a Blob URL or local file path
+      const isUrl = filePath.startsWith('http://') || filePath.startsWith('https://');
+      
+      let dataBuffer;
+      let fileExtension;
+      
+      if (isUrl) {
+        // Download file from Blob URL
+        console.log('Downloading CV from Blob URL:', filePath);
+        dataBuffer = await this.downloadFileToBuffer(filePath);
+        
+        // Determine file type from URL (e.g., .../cv-123.pdf)
+        const urlPath = new URL(filePath).pathname;
+        fileExtension = path.extname(urlPath).toLowerCase();
+        
+        if (!fileExtension) {
+          // Try to detect from buffer (PDF starts with %PDF)
+          if (dataBuffer.toString('utf8', 0, 4) === '%PDF') {
+            fileExtension = '.pdf';
+          } else {
+            throw new Error('Could not determine file type from URL');
+          }
+        }
+      } else {
+        // Local file - check if exists
+        if (!fs.existsSync(filePath)) {
+          throw new Error('CV file not found');
+        }
+        
+        fileExtension = path.extname(filePath).toLowerCase();
+        dataBuffer = fs.readFileSync(filePath);
       }
 
-      // Determine file type and extract text accordingly
-      const fileExtension = path.extname(filePath).toLowerCase();
+      // Extract text based on file type
       let parsedData;
 
       if (fileExtension === '.pdf') {
         // Parse PDF using pdf-parse
-        const dataBuffer = fs.readFileSync(filePath);
         parsedData = await pdfParse(dataBuffer);
       } else if (fileExtension === '.docx') {
         // Parse DOCX using mammoth
-        parsedData = await this.extractFromDocx(filePath);
+        if (isUrl) {
+          // For DOCX from URL, mammoth expects a buffer wrapped in an object
+          parsedData = await mammoth.extractRawText({ buffer: dataBuffer });
+          parsedData = { text: parsedData.value };
+        } else {
+          // For local DOCX, use file path
+          parsedData = await this.extractFromDocx(filePath);
+        }
       } else if (fileExtension === '.doc') {
         // For .doc files, we'll need a different approach
         // For now, throw an error suggesting to convert to DOCX
