@@ -3,17 +3,25 @@ const path = require('path');
 const fs = require('fs');
 const { createErrorResponse } = require('../utils/responseHelper');
 
-// Ensure upload directories exist
+// Ensure upload directories exist (skip on Vercel - read-only filesystem)
 const uploadDirs = {
   cv: path.join(__dirname, '../uploads/cv'),
   profilePictures: path.join(__dirname, '../uploads/profilePictures')
 };
 
-Object.values(uploadDirs).forEach(dir => {
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-});
+// Check if running on Vercel (serverless environment)
+const isVercel = process.env.VERCEL === '1' || process.env.VERCEL_ENV;
+
+if (!isVercel) {
+  // Only create directories if NOT on Vercel (local/traditional server)
+  Object.values(uploadDirs).forEach(dir => {
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+  });
+} else {
+  console.warn('⚠️  Running on Vercel - File uploads disabled (read-only filesystem). Migrate to cloud storage (Cloudinary/S3/Vercel Blob).');
+}
 
 // CV Storage Configuration
 const cvStorage = multer.diskStorage({
