@@ -304,6 +304,7 @@ const calculateMatchScore = (course, studentProfile) => {
   maxScore += 10;
   if (studentProfile.preferredDegreeLevel && course.degreeLevel) {
     if (studentProfile.preferredDegreeLevel.toLowerCase() === course.degreeLevel.toLowerCase()) {
+      // Exact match - full points
       score += 10;
       details.degreeLevelMatch = 10;
       details.reasons.push(`Matches preferred degree level: ${course.degreeLevel}`);
@@ -407,6 +408,12 @@ exports.getRankedCourses = async (req, res) => {
       query.universityName = { $in: preferredUniversities.map(u => new RegExp(u, 'i')) };
     }
 
+    // Location hard filter - only show courses in selected locations
+    if (preferredLocations && preferredLocations.length > 0) {
+      // Filter by city only (since getCities returns city names)
+      query.city = { $in: preferredLocations };
+    }
+
     // IELTS hard filter - only show courses student can potentially apply to
     if (ieltsScore) {
       const ielts = parseFloat(ieltsScore);
@@ -418,6 +425,12 @@ exports.getRankedCourses = async (req, res) => {
     if (budget) {
       const maxBudget = parseFloat(budget) * 1.20;
       query.tuitionFeeInternational = { $lte: maxBudget };
+    }
+
+    // Degree Level hard filter - show only the selected degree level
+    if (preferredDegreeLevel) {
+      // Use exact string match (case-sensitive) since database values are standardized
+      query.degreeLevel = preferredDegreeLevel;
     }
 
     // Execute query
