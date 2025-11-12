@@ -29,12 +29,18 @@ const generateRefreshToken = (student) => {
 };
 
 // Google OAuth Routes
-router.get('/google', 
+router.get('/google', (req, res, next) => {
+  // Check if Google OAuth is configured
+  if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) {
+    logger.error('Google OAuth not configured');
+    return res.redirect(`${process.env.FRONTEND_URL}/auth?error=google_not_configured`);
+  }
+  
   passport.authenticate('google', { 
     scope: ['profile', 'email'],
     session: false 
-  })
-);
+  })(req, res, next);
+});
 
 router.get('/google/callback',
   passport.authenticate('google', { 
@@ -63,12 +69,18 @@ router.get('/google/callback',
 );
 
 // Facebook OAuth Routes
-router.get('/facebook',
+router.get('/facebook', (req, res, next) => {
+  // Check if Facebook OAuth is configured
+  if (!process.env.FACEBOOK_APP_ID || !process.env.FACEBOOK_APP_SECRET) {
+    logger.error('Facebook OAuth not configured');
+    return res.redirect(`${process.env.FRONTEND_URL}/auth?error=facebook_not_configured`);
+  }
+  
   passport.authenticate('facebook', { 
     scope: ['email'],
     session: false 
-  })
-);
+  })(req, res, next);
+});
 
 router.get('/facebook/callback',
   passport.authenticate('facebook', { 
@@ -97,12 +109,18 @@ router.get('/facebook/callback',
 );
 
 // LinkedIn OAuth Routes
-router.get('/linkedin',
+router.get('/linkedin', (req, res, next) => {
+  // Check if LinkedIn OAuth is configured
+  if (!process.env.LINKEDIN_CLIENT_ID || !process.env.LINKEDIN_CLIENT_SECRET) {
+    logger.error('LinkedIn OAuth not configured');
+    return res.redirect(`${process.env.FRONTEND_URL}/auth?error=linkedin_not_configured`);
+  }
+  
   passport.authenticate('linkedin', { 
     scope: ['openid', 'profile', 'email'],
     session: false 
-  })
-);
+  })(req, res, next);
+});
 
 router.get('/linkedin/callback',
   passport.authenticate('linkedin', { 
