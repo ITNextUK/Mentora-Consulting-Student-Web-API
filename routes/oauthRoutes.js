@@ -45,11 +45,16 @@ router.get('/google/callback',
     try {
       const token = generateToken(req.user);
       const refreshToken = generateRefreshToken(req.user);
+      const isNewUser = !req.user.profileCompleted;
       
-      logger.info('Google OAuth success:', { studentId: req.user._id });
+      logger.info('Google OAuth success:', { 
+        studentId: req.user._id, 
+        isNewUser,
+        profileCompleted: req.user.profileCompleted 
+      });
       
-      // Redirect to frontend with tokens
-      res.redirect(`${process.env.FRONTEND_URL}/auth/callback?token=${token}&refreshToken=${refreshToken}&provider=google`);
+      // Redirect to frontend with tokens and profile completion status
+      res.redirect(`${process.env.FRONTEND_URL}/auth/callback?token=${token}&refreshToken=${refreshToken}&provider=google&isNewUser=${isNewUser}`);
     } catch (error) {
       logger.error('Error generating tokens after Google OAuth:', error);
       res.redirect(`${process.env.FRONTEND_URL}/auth?error=token_generation_failed`);
@@ -74,11 +79,16 @@ router.get('/facebook/callback',
     try {
       const token = generateToken(req.user);
       const refreshToken = generateRefreshToken(req.user);
+      const isNewUser = !req.user.profileCompleted;
       
-      logger.info('Facebook OAuth success:', { studentId: req.user._id });
+      logger.info('Facebook OAuth success:', { 
+        studentId: req.user._id,
+        isNewUser,
+        profileCompleted: req.user.profileCompleted 
+      });
       
-      // Redirect to frontend with tokens
-      res.redirect(`${process.env.FRONTEND_URL}/auth/callback?token=${token}&refreshToken=${refreshToken}&provider=facebook`);
+      // Redirect to frontend with tokens and profile completion status
+      res.redirect(`${process.env.FRONTEND_URL}/auth/callback?token=${token}&refreshToken=${refreshToken}&provider=facebook&isNewUser=${isNewUser}`);
     } catch (error) {
       logger.error('Error generating tokens after Facebook OAuth:', error);
       res.redirect(`${process.env.FRONTEND_URL}/auth?error=token_generation_failed`);
@@ -103,11 +113,16 @@ router.get('/linkedin/callback',
     try {
       const token = generateToken(req.user);
       const refreshToken = generateRefreshToken(req.user);
+      const isNewUser = !req.user.profileCompleted;
       
-      logger.info('LinkedIn OAuth success:', { studentId: req.user._id });
+      logger.info('LinkedIn OAuth success:', { 
+        studentId: req.user._id,
+        isNewUser,
+        profileCompleted: req.user.profileCompleted 
+      });
       
-      // Redirect to frontend with tokens
-      res.redirect(`${process.env.FRONTEND_URL}/auth/callback?token=${token}&refreshToken=${refreshToken}&provider=linkedin`);
+      // Redirect to frontend with tokens and profile completion status
+      res.redirect(`${process.env.FRONTEND_URL}/auth/callback?token=${token}&refreshToken=${refreshToken}&provider=linkedin&isNewUser=${isNewUser}`);
     } catch (error) {
       logger.error('Error generating tokens after LinkedIn OAuth:', error);
       res.redirect(`${process.env.FRONTEND_URL}/auth?error=token_generation_failed`);
