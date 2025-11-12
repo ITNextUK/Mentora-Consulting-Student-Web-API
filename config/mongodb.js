@@ -13,7 +13,10 @@ const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://vihi:vihi@itpclust
  */
 const connectDB = async () => {
   try {
-    await mongoose.connect(MONGODB_URI);
+    await mongoose.connect(MONGODB_URI, {
+      serverSelectionTimeoutMS: 5000, // Timeout after 5s instead of 30s
+      socketTimeoutMS: 45000,
+    });
 
     logger.info('MongoDB connected successfully', { service: 'mentora-student-api' });
     
@@ -27,7 +30,14 @@ const connectDB = async () => {
 
   } catch (error) {
     logger.error('Failed to connect to MongoDB:', { error: error.message, service: 'mentora-student-api' });
-    process.exit(1);
+    
+    // Don't exit process on Vercel (serverless environment)
+    if (process.env.VERCEL !== '1') {
+      process.exit(1);
+    } else {
+      logger.warn('Running in serverless environment, continuing despite MongoDB connection error');
+      throw error; // Re-throw to let caller handle it
+    }
   }
 };
 

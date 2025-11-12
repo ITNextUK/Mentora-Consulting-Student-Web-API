@@ -2,7 +2,6 @@ const passport = require('passport');
 const GoogleStrategy = require('passport-google-oauth20').Strategy;
 const FacebookStrategy = require('passport-facebook').Strategy;
 const LinkedInStrategy = require('passport-linkedin-oauth2').Strategy;
-const Student = require('../models/StudentMongo');
 const logger = require('../utils/logger');
 
 // Serialize user for session
@@ -13,9 +12,12 @@ passport.serializeUser((user, done) => {
 // Deserialize user from session
 passport.deserializeUser(async (id, done) => {
   try {
+    // Lazy load Student model to avoid connection issues at startup
+    const Student = require('../models/StudentMongo');
     const student = await Student.findById(id);
     done(null, student);
   } catch (error) {
+    logger.error('Error deserializing user:', error);
     done(error, null);
   }
 });
@@ -32,6 +34,9 @@ if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
       },
       async (accessToken, refreshToken, profile, done) => {
         try {
+          // Lazy load Student model to avoid connection issues at startup
+          const Student = require('../models/StudentMongo');
+          
           logger.info('Google OAuth callback:', { profileId: profile.id });
 
           // Check if student already exists
@@ -88,6 +93,9 @@ if (process.env.FACEBOOK_APP_ID && process.env.FACEBOOK_APP_SECRET) {
       },
       async (accessToken, refreshToken, profile, done) => {
         try {
+          // Lazy load Student model to avoid connection issues at startup
+          const Student = require('../models/StudentMongo');
+          
           logger.info('Facebook OAuth callback:', { profileId: profile.id });
 
           // Check if student already exists
@@ -144,6 +152,9 @@ if (process.env.LINKEDIN_CLIENT_ID && process.env.LINKEDIN_CLIENT_SECRET) {
       },
       async (accessToken, refreshToken, profile, done) => {
         try {
+          // Lazy load Student model to avoid connection issues at startup
+          const Student = require('../models/StudentMongo');
+          
           logger.info('LinkedIn OAuth callback:', { profileId: profile.id });
 
           // Check if student already exists

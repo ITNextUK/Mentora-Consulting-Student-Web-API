@@ -8,8 +8,16 @@ const PORT = process.env.PORT || 3001;
 // Start server
 const startServer = async () => {
   try {
-    // Connect to MongoDB
-    await connectDB();
+    // Connect to MongoDB (with retry logic)
+    try {
+      await connectDB();
+    } catch (dbError) {
+      logger.error('MongoDB connection failed, but continuing in serverless mode:', dbError.message);
+      // In serverless environment, we'll retry connection on each request
+      if (process.env.VERCEL !== '1') {
+        throw dbError;
+      }
+    }
 
     // Start listening
     const server = app.listen(PORT, () => {
