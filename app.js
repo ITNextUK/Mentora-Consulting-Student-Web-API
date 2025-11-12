@@ -3,11 +3,14 @@ const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const path = require('path');
+const session = require('express-session');
+const passport = require('./config/passport');
 
 // Import routes
 const authRoutes = require('./routes/authRoutes');
 const studentRoutes = require('./routes/studentRoutes');
 const courseRoutes = require('./routes/courseRoutes');
+const oauthRoutes = require('./routes/oauthRoutes');
 
 // Import middleware
 const { errorHandler, notFoundHandler } = require('./middlewares/errorHandler');
@@ -65,6 +68,22 @@ app.use('/api', limiter);
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
+// Session middleware (required for Passport)
+app.use(session({
+  secret: process.env.SESSION_SECRET || 'mentora_session_secret',
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    secure: process.env.NODE_ENV === 'production', // HTTPS only in production
+    httpOnly: true,
+    maxAge: 24 * 60 * 60 * 1000 // 24 hours
+  }
+}));
+
+// Initialize Passport
+app.use(passport.initialize());
+app.use(passport.session());
+
 // Static file serving for uploads
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
@@ -90,6 +109,7 @@ app.get('/health', (req, res) => {
 // API routes
 const apiPrefix = process.env.API_PREFIX || '/api/v1';
 app.use(`${apiPrefix}/auth`, authRoutes);
+app.use(`${apiPrefix}/auth`, oauthRoutes); // OAuth routes
 app.use(`${apiPrefix}/students`, studentRoutes);
 app.use(`${apiPrefix}/courses`, courseRoutes);
 

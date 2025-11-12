@@ -32,13 +32,34 @@ const studentSchema = new mongoose.Schema({
   },
   password: {
     type: String,
-    required: true,
+    required: function() {
+      // Password not required if using OAuth
+      return !this.googleId && !this.facebookId && !this.linkedinId;
+    },
     minlength: 8
   },
   phone: {
     type: String,
     trim: true
   },
+  
+  // OAuth Provider IDs
+  googleId: {
+    type: String,
+    unique: true,
+    sparse: true // Allows multiple null values
+  },
+  facebookId: {
+    type: String,
+    unique: true,
+    sparse: true
+  },
+  linkedinId: {
+    type: String,
+    unique: true,
+    sparse: true
+  },
+  
   dateOfBirth: {
     type: Date
   },
