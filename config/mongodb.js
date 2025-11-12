@@ -40,7 +40,6 @@ const connectDB = async () => {
       minPoolSize: 1,
       retryWrites: true,
       w: 'majority',
-      bufferCommands: false, // Disable buffering for serverless
     });
 
     logger.info('MongoDB connected successfully', { service: 'mentora-student-api' });

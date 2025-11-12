@@ -3,6 +3,18 @@ const router = express.Router();
 const passport = require('../config/passport');
 const jwt = require('jsonwebtoken');
 const logger = require('../utils/logger');
+const { connectDB } = require('../config/mongodb');
+
+// Middleware to ensure MongoDB connection for OAuth routes
+const ensureDBConnection = async (req, res, next) => {
+  try {
+    await connectDB();
+    next();
+  } catch (error) {
+    logger.error('Failed to connect to MongoDB in OAuth route:', error);
+    res.redirect(`${process.env.FRONTEND_URL}/auth?error=database_connection_failed`);
+  }
+};
 
 // Helper function to generate JWT token
 const generateToken = (student) => {
@@ -29,7 +41,7 @@ const generateRefreshToken = (student) => {
 };
 
 // Google OAuth Routes
-router.get('/google', (req, res, next) => {
+router.get('/google', ensureDBConnection, (req, res, next) => {
   // Check if Google OAuth is configured
   if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) {
     logger.error('Google OAuth not configured');
@@ -43,6 +55,7 @@ router.get('/google', (req, res, next) => {
 });
 
 router.get('/google/callback',
+  ensureDBConnection,
   passport.authenticate('google', { 
     failureRedirect: `${process.env.FRONTEND_URL}/auth?error=google_auth_failed`,
     session: false 
@@ -69,7 +82,7 @@ router.get('/google/callback',
 );
 
 // Facebook OAuth Routes
-router.get('/facebook', (req, res, next) => {
+router.get('/facebook', ensureDBConnection, (req, res, next) => {
   // Check if Facebook OAuth is configured
   if (!process.env.FACEBOOK_APP_ID || !process.env.FACEBOOK_APP_SECRET) {
     logger.error('Facebook OAuth not configured');
@@ -83,6 +96,7 @@ router.get('/facebook', (req, res, next) => {
 });
 
 router.get('/facebook/callback',
+  ensureDBConnection,
   passport.authenticate('facebook', { 
     failureRedirect: `${process.env.FRONTEND_URL}/auth?error=facebook_auth_failed`,
     session: false 
@@ -109,7 +123,7 @@ router.get('/facebook/callback',
 );
 
 // LinkedIn OAuth Routes
-router.get('/linkedin', (req, res, next) => {
+router.get('/linkedin', ensureDBConnection, (req, res, next) => {
   // Check if LinkedIn OAuth is configured
   if (!process.env.LINKEDIN_CLIENT_ID || !process.env.LINKEDIN_CLIENT_SECRET) {
     logger.error('LinkedIn OAuth not configured');
@@ -123,6 +137,7 @@ router.get('/linkedin', (req, res, next) => {
 });
 
 router.get('/linkedin/callback',
+  ensureDBConnection,
   passport.authenticate('linkedin', { 
     failureRedirect: `${process.env.FRONTEND_URL}/auth?error=linkedin_auth_failed`,
     session: false 
