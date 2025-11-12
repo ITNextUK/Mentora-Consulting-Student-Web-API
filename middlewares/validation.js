@@ -93,7 +93,9 @@ const validateProfileUpdate = [
   
   body('phone')
     .optional({ checkFalsy: true })
-    .isMobilePhone().withMessage('Invalid phone number'),
+    .trim()
+    .customSanitizer(value => value ? value.replace(/\s+/g, '') : value) // Remove all spaces
+    .isMobilePhone('any', { strictMode: false }).withMessage('Invalid phone number'),
   
   body('dateOfBirth')
     .optional({ checkFalsy: true })
